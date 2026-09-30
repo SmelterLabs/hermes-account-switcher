@@ -1,0 +1,16 @@
+{
+  "name": "codex-account-switch",
+  "version": "1.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run --config desktop/vitest.config.mjs"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.0",
+    "jsdom": "^26.1.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "vitest": "4.1.11"
+  }
+}

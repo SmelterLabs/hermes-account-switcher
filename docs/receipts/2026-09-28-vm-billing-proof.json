@@ -1,0 +1,59 @@
+{
+  "what": "Which Codex account really pays for a model request, before and after a real switch, measured on the wire.",
+  "when": "2026-09-28 17:29-17:33 CT",
+  "machine": "Hyper-V test machine switcher-test, Windows 11 Pro 25H2 build 26200; Hermes v0.21.5+3840.g9a0a162 (upstream 9a0a1625) installed by a normal signed-in user with the official source script",
+  "plugin": "codex-account-switch 1.2.0-rc.3 development build, as installed for the 2026-09-28 real-switch receipt",
+  "method": "Hermes's own command (hermes chat --oneshot --provider openai-codex -m gpt-6-astra) was pointed at a relay on the test machine's loopback using Hermes's own HERMES_CODEX_BASE_URL override. The relay read the email inside the bearer token of every request, compared the ChatGPT-Account-Id header with the token, passed the request to chatgpt.com/backend-api/codex unchanged and returned OpenAI's answer. OpenAI bills the account the token belongs to. No token or account id was printed or stored. Script: test-vm/vm-billing-proof.py.",
+  "runs": [
+    {
+      "selected_before_request": "gmail",
+      "saved_order": ["gmail 0", "personal 1"],
+      "answer": "pong",
+      "exit": 0,
+      "seconds": 44.9,
+      "requests_on_the_wire": 14,
+      "requests_carrying_the_gmail_token": 14,
+      "requests_carrying_the_personal_token": 0,
+      "model_requests_answered_200_by_openai": 2,
+      "account_header_disagreed_with_token": 0,
+      "accounts_that_paid": ["gmail"],
+      "verdict": "PASS"
+    },
+    {
+      "switch_between_runs": {
+        "route": "plugin API (/preflight then /switch)",
+        "from": "gmail", "to": "personal", "seconds": 66.5,
+        "states": ["accepted 0.5", "checking 16.5", "restarting 18.5", "applying 26.7", "reopening 34.7", "verifying 50.1", "complete 66.5"],
+        "receipt_message": "Codex Personal verified after restart.",
+        "desktop_pid": {"old": 5820, "new": 11316},
+        "gateway_pid": {"old": 524, "new": 3092},
+        "stored_order_after": ["personal 0", "gmail 1"]
+      },
+      "selected_before_request": "personal",
+      "saved_order": ["personal 0", "gmail 1"],
+      "answer": "pong",
+      "exit": 0,
+      "seconds": 37.5,
+      "requests_on_the_wire": 14,
+      "requests_carrying_the_gmail_token": 0,
+      "requests_carrying_the_personal_token": 14,
+      "model_requests_answered_200_by_openai": 2,
+      "account_header_disagreed_with_token": 0,
+      "accounts_that_paid": ["personal"],
+      "verdict": "PASS"
+    }
+  ],
+  "answered_by_these_runs": [
+    "A model request made after a switch is sent with the newly selected account's login, and OpenAI accepts it.",
+    "The stored order and the account on the wire agree in both directions."
+  ],
+  "not_answered_by_these_runs": [
+    "A request made by a chat inside Hermes Desktop (these were Hermes's command-line one-shot requests, which read the same stored logins).",
+    "OpenAI's own usage meter moving: it reports whole percentages and one small request does not move it.",
+    "Behavior when the selected login is dead and Hermes falls through to the next one."
+  ],
+  "notes": [
+    "Eleven of the fourteen requests in each run are Hermes probing a custom address for local-server features; OpenAI answers them 403 or 400. They exist only because the relay address is not the default one.",
+    "Hermes keeps a per-login request counter in memory only; it stayed 0 on disk after a successful request, so it cannot be used as evidence."
+  ]
+}

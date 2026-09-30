@@ -1,0 +1,61 @@
+{
+  "what": "Real Claude account switching on a stock Windows Hermes with two real Claude accounts: switches, which account a request really uses, and a switch of Codex and Claude together through the dialog.",
+  "when": "2026-09-28 22:43 to 2026-09-29 00:05 CT",
+  "machine": "Hyper-V test machine switcher-test, Windows 11 Pro 25H2 build 26200; Hermes v0.21.5+4531.g3cf2eb1 (upstream 3cf2eb1c) installed with the official Windows installer",
+  "plugin": "codex-account-switch 1.2.0-rc.4 development builds of the evening (the last one installed: archive SHA-256 31fac2e306b7777840eeec71b646d9db57cb801118a67e17dbef9d9c2e1ab116)",
+  "prerequisites": {
+    "claude_code": "2.1.284, from Anthropic's installer script (SHA-256 cd17c6b555f761d60373659824bf805e1510538226e4c7028e19d7494937a333); claude.exe signature valid, signed by Anthropic, PBC; installed to ~\\.local\\bin, which the installer does not put on PATH",
+    "provider_plugin": "hermes plugins install claude-subscription-directsdk; it lands in plugins\\claude-subscription-directsdk-experimental, version 0.3.0, kind model-provider; enabled afterwards as Hermes's own message asked"
+  },
+  "found_before_any_switch": [
+    "The plugin's provider check looked for a folder named claude-subscription-directsdk and demanded an entry in plugins.enabled. The provider installs under claude-subscription-directsdk-experimental and, being a model provider, needs no such entry by its own documentation. Every real Claude switch would have been refused. Fixed; regression test added.",
+    "Adding a Claude account meant editing the settings file by hand. setup.cmd claude <key> <email> now adds it and starts the sign-in.",
+    "The sign-in helper needed Hermes's runtime Python and was documented as plain 'python'. It now restarts itself under Hermes's Python.",
+    "claude was looked for on PATH only. The plugin now also looks where Anthropic's installer puts it."
+  ],
+  "sign_ins": {
+    "how": "Claude's own sign-in (claude auth login --claudeai) was started on the test machine for each account's Hermes login folder. It listens on the machine's loopback for the browser's answer. That port was passed through to the owner's PC over SSH for a few minutes, and the owner approved in his own browser. No code was typed or pasted by anyone, and the tester never saw a credential.",
+    "first_attempt": "The owner's browser was signed in to Claude as the Gmail account, so the sign-in meant for the Anthropic account landed as Gmail. The plugin's identity check refused it: 'The Anthropic Claude folder is logged in as <one address>, not <the expected address>'. Anthropic confirmed the login belonged to the Gmail account. It was moved, whole and not copied, into the Gmail account's folder, where it verified.",
+    "second_attempt": "The Anthropic account's sign-in, approved in another browser, landed in 10 seconds and verified.",
+    "result": "both accounts verified by Anthropic as the expected identities"
+  },
+  "identity_check_reliability": "Two of about seven identity checks failed to reach Anthropic from the test machine and passed when repeated (three of three). The check now retries once; regression test added.",
+  "switches": [
+    {
+      "route": "plugin API (/preflight then /switch)",
+      "claude": {"from": "none selected", "to": "anthropic"},
+      "seconds": 62.7,
+      "states": ["accepted 0.6", "checking 33.1", "restarting 35.5", "applying 37.7", "verifying 38.7", "complete 62.7"],
+      "receipt_message": "Claude Anthropic verified after restart.",
+      "identity_checked": "before and after the restart, by token",
+      "proof": "a real request (hermes chat --oneshot, provider claude-subscription-directsdk-experimental, model sonnet) answered; it started 8 claude processes; each was handed the Anthropic account's login folder; Anthropic confirmed that folder's owner; PASS"
+    },
+    {
+      "route": "plugin API (/preflight then /switch)",
+      "claude": {"from": "anthropic", "to": "gmail"},
+      "seconds": 67.6,
+      "states": ["accepted 0.5", "checking 35.5", "restarting 36.5", "applying 38.6", "verifying 39.6", "complete 67.6"],
+      "receipt_message": "Claude Gmail verified after restart.",
+      "proof": "a real request answered; 8 claude processes; each was handed the Gmail account's login folder; Anthropic confirmed that folder's owner; PASS",
+      "codex_left_alone": "the Codex billing proof afterwards still showed every request carrying the Gmail Codex login, the one selected before"
+    },
+    {
+      "route": "Desktop interface: status-bar button (Codex: Gmail, Claude: Gmail), dialog with both selectors, Switch account button; mouse and keyboard only",
+      "codex": {"from": "gmail", "to": "personal"},
+      "claude": {"from": "gmail", "to": "anthropic"},
+      "seconds": 46.3,
+      "receipt_message": "Codex Personal and Claude Anthropic verified after restart.",
+      "desktop_pid": {"old": 11988, "new": 11420},
+      "codex_proof": "every request on the wire carried the Personal login; PASS",
+      "claude_proof": "6 claude processes; each was handed the Anthropic account's login folder; Anthropic confirmed that folder's owner; PASS"
+    }
+  ],
+  "method_of_the_claude_proof": "test-vm/vm-claude-proof.py sends one small request through Hermes's own command, watches for the claude processes it starts, reads from each the CLAUDE_CONFIG_DIR it was handed, and then asks Anthropic who owns the login in that folder. No token is printed or stored.",
+  "screenshots": "C:/VMs/switcher-test/screens/ (claude-dialog, claude-both-selected, claude-both-after)",
+  "not_answered_by_these_runs": [
+    "Signing a Claude account in by pasting the code into setup.cmd claude, the route a user without the SSH pass-through takes. That code is unchanged from the internal tool.",
+    "Claude switching with more than one profile.",
+    "Removing the Claude selection ('unset') through the plugin.",
+    "A Claude login whose token has expired."
+  ]
+}

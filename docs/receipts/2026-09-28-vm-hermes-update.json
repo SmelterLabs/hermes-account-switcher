@@ -1,0 +1,41 @@
+{
+  "what": "The plugin, its settings and the logins surviving a Hermes update, with a real switch and a billing proof on the new build.",
+  "when": "2026-09-28 18:17-18:35 CT",
+  "machine": "Hyper-V test machine switcher-test, Windows 11 Pro 25H2 build 26200; Hermes installed by a normal signed-in user with the official source script",
+  "plugin": "codex-account-switch 1.2.0-rc.4 development build (archive SHA-256 204fe9c071f3686ac1a0bb572fb2f4e5b63861eada941be8ec8c566b78a90a79), installed in profiles default and work before the update",
+  "update": {
+    "how": "Hermes Desktop closed politely, then Hermes's own command 'hermes update --yes' in the signed-in session (not over SSH, not elevated)",
+    "build_a": "v0.21.5+3840.g9a0a162, upstream 9a0a1625",
+    "build_b": "v0.21.5+4469.g7154128, upstream 7154128f",
+    "commits_absorbed": 629,
+    "seconds": 666,
+    "exit": 0,
+    "hermes_did_by_itself": ["migrated both profiles' config format (v46 to v49)", "refreshed the Windows gateway launcher scripts", "restarted the default profile's gateway"]
+  },
+  "after_the_update": {
+    "plugin_code_present": true,
+    "settings_present": true,
+    "status": "HTTP 200, selected gmail, no blockers",
+    "preflight": "HTTP 200, ok, no blockers (the plugin's check of Hermes's private interfaces passed on the new build)",
+    "badge": "'Codex: Gmail' (screenshot after-hermes-update-183130.png)"
+  },
+  "switch_on_build_b": {
+    "route": "plugin API (/preflight then /switch)",
+    "from": "gmail", "to": "personal", "seconds": 48.3,
+    "states": ["accepted 1.1", "checking 14.1", "restarting 16.1", "applying 22.1", "reopening 29.1", "verifying 37.3", "complete 48.3"],
+    "receipt_message": "Codex Personal verified after restart.",
+    "desktop_pid": {"old": 10448, "new": 1316},
+    "gateway_pid": {"old": 9616, "new": 1824},
+    "stored_order_after": ["personal 0", "gmail 1"],
+    "warnings": []
+  },
+  "billing_on_build_b": {
+    "default": "every request on the wire carried the Personal login; OpenAI answered; PASS",
+    "work": "every request on the wire carried the Personal login; OpenAI answered; PASS"
+  },
+  "not_answered_by_this_run": [
+    "An update made with Hermes Desktop's in-app updater.",
+    "A Hermes build that changes one of the private interfaces the plugin checks (the refusal path is covered by unit tests only).",
+    "The packaged Desktop app."
+  ]
+}

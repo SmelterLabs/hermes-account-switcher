@@ -1,0 +1,68 @@
+{
+  "what": "Real Codex account switches on a clean stock Windows Hermes install, through the installed plugin. Two through the plugin's own API, one entirely through the Desktop interface.",
+  "when": "2026-09-28 17:05-17:11 CT",
+  "machine": "Hyper-V test machine switcher-test, Windows 11 Pro 25H2 build 26200; Hermes v0.21.5+3840.g9a0a162 (upstream 9a0a1625367242596d338ae2da541c4a1fc785a2) installed by a normal signed-in user with the official source script",
+  "plugin_archive": "codex-account-switch-1.2.0-rc.3.zip (development build, uncommitted working tree on dce3d85)",
+  "plugin_archive_sha256": "7CD91D41D9911FA04382F953EF67D0F5BC655F8E7EB5E407F5609D9F11B28A72",
+  "settings": "gateway_service null (stock), two Codex accounts keyed personal and gmail, no Claude accounts",
+  "accounts": "two real Codex logins enrolled on the test machine by their owner through Hermes's device sign-in; identities confirmed by the email inside each login; nothing copied from the owner's PC",
+  "switches": [
+    {
+      "route": "plugin API (/preflight then /switch)",
+      "from": "personal", "to": "gmail", "seconds": 39.6,
+      "states": ["accepted 0.1", "checking 10.1", "restarting 12.1", "applying 16.1", "reopening 23.1", "verifying 29.2", "complete 39.6"],
+      "receipt_message": "Codex Gmail verified after restart.",
+      "desktop_pid": {"old": 2052, "new": 5824},
+      "gateway_pid": {"old": 8492, "new": 9940},
+      "stored_order_after": ["gmail 0", "personal 1"],
+      "warnings": []
+    },
+    {
+      "route": "plugin API (/preflight then /switch)",
+      "from": "gmail", "to": "personal", "seconds": 52.6,
+      "states": ["accepted 0.1", "checking 9.1", "restarting 11.1", "applying 15.1", "reopening 21.2", "verifying 27.3", "complete 52.6"],
+      "receipt_message": "Codex Personal verified after restart.",
+      "desktop_pid": {"old": 5824, "new": 1748},
+      "gateway_pid": {"old": 9940, "new": 7468},
+      "stored_order_after": ["personal 0", "gmail 1"],
+      "warnings": ["Switch verified; OpenAI quota re-check failed afterwards: Could not confirm the selected Codex account with OpenAI."]
+    },
+    {
+      "route": "Desktop interface: status-bar badge, dialog, account selector, Switch account button (mouse and keyboard only)",
+      "from": "personal", "to": "gmail",
+      "badge_before": "Codex: Personal - Claude: Unset",
+      "badge_after": "Codex: Gmail - Claude: Unset",
+      "dialog_before_switch": "No active Hermes work blocked the restart check.",
+      "stored_order_after": ["gmail 0", "personal 1"],
+      "screenshots": "C:/VMs/switcher-test/screens/ (dialog-open, dialog-gmail-selected, ui-switch-front)"
+    }
+  ],
+  "answered_by_these_runs": [
+    "a gateway started by the switch worker while Desktop is closed stays up",
+    "the plugin's backend API mounts on stock Hermes and its gate installs on the real dispatcher",
+    "the Desktop half loads once the user turns on its switch under Capabilities > Plugins"
+  ],
+  "defects_found_and_fixed_on_the_way": [
+    "installer kept its rollback copy under plugins/, where Hermes loaded it as a duplicate plugin and rejected the real one",
+    "installer refused every update after the plugin's first run because of Python's __pycache__ files",
+    "backend discovery required --profile; a stock single-profile backend has none",
+    "the preflight route called its own backend over HTTP and waited on itself for 8.6 s, then reported 'not responding'",
+    "the switch worker inherited the backend's PYTHONPATH; importing Hermes then relaunched and exited the worker (SystemExit) before its first check",
+    "the worker caught Exception, not BaseException, so that exit left the receipt at 'accepted' forever"
+  ],
+  "not_covered": [
+    "a model request after the switch, to prove which account OpenAI actually bills",
+    "Claude accounts",
+    "more than one Hermes profile",
+    "refusal cases through the interface: busy session, wrong or expired login",
+    "a failure mid-switch and the recovery path",
+    "a Hermes update between two builds",
+    "the packaged Desktop app (MSIX) install route",
+    "a from-scratch run starting at the clean-windows restore point"
+  ],
+  "cosmetic_notes": [
+    "the badge renders as dark text on a solid blue button",
+    "the badge shows 'Claude: Unset' even when no Claude account is configured",
+    "Hermes logs 'Failed to load plugin codex-account-switch: No __init__.py' at every start (the API still mounts)"
+  ]
+}

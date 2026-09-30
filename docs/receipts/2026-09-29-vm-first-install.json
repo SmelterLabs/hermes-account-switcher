@@ -1,0 +1,39 @@
+{
+  "what": "A first-time install on a blank Windows 11, doing only what the README tells a new user to do, ending in a real switch through the dialog.",
+  "when": "2026-09-28 21:51 to 22:38 CT",
+  "machine": "Hyper-V test machine switcher-test put back to its clean Windows 11 Pro 25H2 (build 26200) restore point: no Hermes, no Python, no Git, no Node",
+  "hermes_install": {
+    "how": "Hermes's official Windows installer from the download page of its site: Hermes-Setup.exe, run by a normal signed-in user with a double-click and one press of Install",
+    "installer": "7.6 MB, SHA-256 cfc818adf831a748c61a407152a03c7a426ebee78f499d20a31fae2b5ac5d827, signature valid, signed by Nous Research Inc., issued by Microsoft ID Verified CS EOC CA 03, timestamped",
+    "minutes": 17,
+    "result": "Hermes v0.21.5+4531.g3cf2eb1 (upstream 3cf2eb1c), install method git, in %LOCALAPPDATA%\\hermes",
+    "finding": "It builds the same install as the install script: the hermes-agent folder, bin\\hermes.exe, and Hermes Desktop inside the checkout at apps\\desktop\\release\\win-unpacked\\Hermes.exe. The Desktop shortcuts point there. No gateway and no scheduled task exist after a fresh install."
+  },
+  "what_a_new_machine_lacks": "The python command on a fresh Windows is a stub that opens the Microsoft Store; git, node and py are not found. Hermes brings its own Python under tools\\python-3.14.7+20260901-win32-x64.",
+  "plugin_install": [
+    {"step": "setup.cmd, before any account was signed in", "result": "plugin code installed (13 files); settings not written; message: No Codex account is signed in to Hermes yet. Sign in with \"hermes auth add openai-codex\" (once per account), then run this again."},
+    {"step": "hermes plugins enable codex-account-switch", "result": "exit 0, named in config.yaml"},
+    {"step": "two Codex accounts signed in by their owner with Hermes's device sign-in (hermes auth add openai-codex)", "result": "both landed on the expected accounts, confirmed by the email inside each login"},
+    {"step": "setup.cmd again, answering yes", "result": "settings written: the folders of this install, gateway_service null, accounts personal and gmail"},
+    {"step": "Hermes Desktop restarted; Capabilities, Plugins, Installed; the switch on the Account switch card turned on with the mouse", "result": "the status-bar button appeared: Codex: Personal"}
+  ],
+  "first_switch": {
+    "route": "status-bar button, dialog, account selector, Switch account button; mouse and keyboard only",
+    "dialog_before": "No active Hermes work blocked the restart check.",
+    "from": "personal", "to": "gmail", "seconds": 54.6,
+    "receipt_message": "Codex Gmail verified after restart.",
+    "desktop_pid": {"old": 11596, "new": 3096},
+    "gateway": "none on a fresh install; Hermes Desktop alone was restarted",
+    "billing_afterwards": "every request on the wire carried the Gmail login; OpenAI answered; PASS"
+  },
+  "seen_along_the_way": [
+    "Hermes Desktop's own first-run screen asks for a model provider before anything else.",
+    "The plugin's card has one switch; there is no separate switch labelled Desktop.",
+    "A banner 'Could not load agent plugins: request timed out after 30s: plugins.manage' showed on the Plugins screen when it was opened right after Hermes Desktop started, and was gone when the screen was reopened. Its cause was not established."
+  ],
+  "screenshots": "C:/VMs/switcher-test/screens/ (setup-2, setup-progress, fresh-installed, fresh-toggle, fresh-dialog, fresh-selected, fresh-after-switch)",
+  "not_answered_by_this_run": [
+    "An install through Hermes's catalog (hermes plugins install), which needs the public repository.",
+    "A machine where the user's own Python is on PATH in place of the Store stub (setup.cmd does not use it)."
+  ]
+}

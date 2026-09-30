@@ -1,0 +1,104 @@
+{
+  "what": "Refusal cases, failures in the middle of a real switch, and a second profile, on a clean stock Windows Hermes install with two real Codex accounts.",
+  "when": "2026-09-28 17:36-18:20 CT",
+  "machine": "Hyper-V test machine switcher-test, Windows 11 Pro 25H2 build 26200; Hermes v0.21.5+3840.g9a0a162 (upstream 9a0a1625) installed by a normal signed-in user with the official source script",
+  "method": "Each case puts the machine into one bad condition, asks the installed plugin for status and preflight through Hermes Desktop's own backend, forces a switch request anyway, and compares before and after: account order, a one-way mark of every login, the settings file, and the Desktop, backend and gateway process ids. The condition is always undone; a login field is put back only if Hermes has not changed it in the meantime. Scripts: test-vm/vm-refusal.py, test-vm/vm-failure.py, test-vm/vm-billing-proof.py. Raw results: C:/VMs/switcher-test/results/.",
+  "refusals_on_rc3_development_build": [
+    {
+      "case": "The settings name an email that matches no login",
+      "status_and_preflight": "HTTP 409, 'Codex account identity is missing, duplicated, or unrecognized.'",
+      "forced_switch": "accepted, failed after 8.0 s with the same message, before anything was closed",
+      "unchanged": ["account order", "logins", "settings", "Desktop", "backend", "gateway"],
+      "lock_left_behind": false,
+      "verdict": "PASS",
+      "changed_afterwards": "rc.4 names the login's email and says it is not in the settings"
+    },
+    {
+      "case": "OpenAI rejects the target login (its signature was altered, as a revoked login would be)",
+      "status_and_preflight": "HTTP 200, no blocker: the idle check does not ask OpenAI",
+      "forced_switch": "accepted, failed after 8.0 s during checking with 'Could not confirm the selected Codex account with OpenAI.', before anything was closed",
+      "unchanged": ["account order", "logins", "settings", "Desktop", "backend", "gateway"],
+      "lock_left_behind": false,
+      "verdict": "PASS"
+    },
+    {
+      "case": "The target login's access token has expired",
+      "status_and_preflight": "HTTP 409 while it was expired",
+      "what_happened": "Hermes renewed the login with OpenAI by itself 5 seconds later (new token issued 17:37:28). The forced switch, requested after the refusal, then found a valid login and completed a real, verified switch in 43.7 s.",
+      "verdict": "REFUSED WHILE EXPIRED, then allowed once Hermes had renewed the login. Not a standing refusal.",
+      "side_effect": "The Gmail login on the test machine was renewed, so the restore points taken before 17:37 hold an older copy of it.",
+      "changed_afterwards": "rc.4 says which login expired and that Hermes normally renews it by itself"
+    },
+    {
+      "case": "The selected login is marked dead",
+      "status": "selected gmail, effective personal, warning 'hermes: Gmail login is dead, so Codex is billing Personal. Sign Gmail in again.'",
+      "real_request_while_dead": "answered; every request on the wire carried the Personal login, as the warning said",
+      "unchanged": ["account order", "logins", "settings", "Desktop", "backend", "gateway"],
+      "verdict": "PASS: the warning names the account that really pays",
+      "changed_afterwards": "rc.4 names the first profile 'default' instead of its folder name"
+    },
+    {
+      "case": "A conversation is running in Hermes Desktop",
+      "dialog": "'Switch blocked: default: A conversation is running, initializing, or waiting for input.' (screenshot busy-dialog-174340.png)",
+      "forced_switch": "accepted, failed after 9.1 s with the same message, before anything was closed; the conversation kept running",
+      "running_chat_login": "the plugin's per-backend state reported the running chat holding the Gmail login, the selected one",
+      "unchanged": ["account order", "logins", "settings", "Desktop", "backend", "gateway"],
+      "verdict": "PASS"
+    }
+  ],
+  "failures_in_the_middle_of_a_switch": [
+    {
+      "case": "The plugin's settings file changes while Hermes is closed",
+      "build": "rc.3 development build, repeated on rc.4",
+      "result": "failed; previous account order restored; Desktop and gateway reopened as new processes; no lock or drain marker left; order, logins and settings unchanged",
+      "message_rc3": "'The switch failed safely during reopening (SettingsError).'",
+      "message_rc4": "'Account-switch settings changed during this operation; account writes refused.'",
+      "seconds": 29.0,
+      "verdict": "PASS"
+    },
+    {
+      "case": "The login store cannot be written while Hermes is closed (made read-only)",
+      "build": "rc.3 development build, repeated on rc.4",
+      "result": "failed during applying; the restore could not be written either and the receipt says so ('restore_failed; profile stores may disagree'); Desktop and gateway reopened; nothing had been changed; no lock or drain marker left",
+      "seconds": 30.0,
+      "verdict": "PASS",
+      "changed_afterwards": "the message now names the stage and says the previous order could not be written back (covered by a unit test; not repeated on the machine after that wording change)"
+    },
+    {
+      "case": "The switch worker is ended while Hermes is closed (a crash or a power cut)",
+      "build_rc3": {
+        "left_behind": ["Desktop closed", "gateway stopped", "the switch lock", "the plugin's gateway drain marker", "a receipt stuck at 'restarting'"],
+        "accounts": "unchanged",
+        "after_reopening_desktop_by_hand": "status and preflight said 'An account switch is already in progress.' with no way out from the interface; the installer refused as well",
+        "verdict": "FAIL: a dead end for the user"
+      },
+      "build_rc4": {
+        "after_reopening_desktop_by_hand": "the lock and the plugin's drain marker were removed; the receipt reads 'The last account switch was interrupted during restarting, after Hermes had been closed. Check which account is selected before switching again. The Hermes gateway is not running; start it again.'; preflight clear",
+        "then": "gateway started with Hermes's own scheduled task; a real switch completed in 37.6 s",
+        "how_rc4_was_installed_over_the_leftovers": "the abandoned lock was set aside for the installer and put back byte for byte with its old date, by the test's operator",
+        "verdict": "PASS"
+      }
+    }
+  ],
+  "second_profile_on_rc4_development_build": {
+    "profile": "'work', created with 'hermes profile create work'; it holds no Codex logins of its own",
+    "finding": "On this Hermes a profile without its own Codex logins uses the first profile's logins.",
+    "before_enabling": "preflight blocked: 'work: Account Switcher backend is not enabled.'; 'hermes -p work plugins enable codex-account-switch' refused with 'No plugin named codex-account-switch' until the plugin was installed into the profile's own folder",
+    "after_installing_into_the_profile_and_enabling": "preflight clear; switch personal to gmail complete in 39.6 s",
+    "requests_after_the_switch": {"work": "every request carried the Gmail login", "default": "every request carried the Gmail login"},
+    "requests_before_the_switch": {"work": "every request carried the Personal login, the one then selected"},
+    "verdict": "PASS",
+    "changed_afterwards": "the blocker now gives the two steps and the exact command"
+  },
+  "not_answered_by_these_runs": [
+    "A profile that holds its own Codex logins, on stock Hermes (it needs its own sign-ins by the accounts' owner).",
+    "Claude accounts.",
+    "A worker ended during applying, with stores half changed (needs more than one store).",
+    "The packaged Desktop app.",
+    "A Hermes update."
+  ],
+  "seen_but_not_this_plugin": [
+    "Hermes logs 'Group Chat worker failed to start' with an import deadlock at some gateway starts (16:05 and 17:09).",
+    "Right after Desktop reopens, preflight can report a conversation 'initializing' for a few seconds while Desktop restores its last session."
+  ]
+}

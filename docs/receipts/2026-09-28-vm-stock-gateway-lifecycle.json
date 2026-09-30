@@ -1,0 +1,43 @@
+{
+  "what": "The installed plugin's stock gateway route, run against a real gateway on a clean stock Windows install. No accounts were read or changed.",
+  "when": "2026-09-28 16:03-16:06 CT",
+  "machine": "Hyper-V test machine switcher-test, Windows 11 Pro 25H2 build 26200, Hermes installed by a normal signed-in user with the official source script",
+  "hermes": "v0.21.5+3840.g9a0a162, upstream 9a0a1625367242596d338ae2da541c4a1fc785a2, Python 3.14.7",
+  "plugin_archive": "codex-account-switch-1.2.0-rc.3.zip (development build)",
+  "plugin_archive_sha256": "CA7C008DEB832BC4FBDBA0DF0003B55219F31F27E551CFFB5B976B660710D395",
+  "gateway_started_by": "Hermes's own launcher, from a normal-user session; login auto-start registered as scheduled task Hermes_Gateway",
+  "result": {
+    "hold_seconds": 100,
+    "safety_interfaces": "ok",
+    "before": {"status": "running", "pid": 3736, "born": 1790629322.9223156},
+    "gateway_in_use": true,
+    "health_endpoint_8642_before": "unreachable (URLError)",
+    "ledgers": [{"home": "hermes", "pid": 3736, "state": "running", "owner": "C:\\Users\\tester\\AppData\\Local\\hermes"}],
+    "drain_acknowledged_seconds": 1.0,
+    "stop_seconds": 3.6,
+    "after_stop": {"status": "stopped", "pid": null, "born": null},
+    "came_back_during_hold": [],
+    "start_seconds": 5.1,
+    "healthy_after_seconds": 1.0,
+    "after_start": {"status": "running", "pid": 8492, "born": 1790629547.9300003},
+    "is_a_new_process": true,
+    "still_alive_after_20s": true,
+    "health_endpoint_8642_after": "unreachable (URLError)",
+    "ledger_after": {"pid": 8492, "state": "running"},
+    "leftover_drain_marker": false,
+    "result": "ok"
+  },
+  "earlier_failed_run_same_day": {
+    "when": "15:58-16:01 CT",
+    "result": "FAILED SwitchError: The Hermes gateway did not start.",
+    "cause": "gateway commands were run as `python -m hermes_cli.main gateway start`; the spawned gateway exited with 'no dependency environment is committed for this install'. Hermes reported the failure in text with exit code 0.",
+    "fix": "gateway commands now go through Hermes's own launcher (bin/hermes.exe); stock health is read from the gateway's ledger because stock serves no health endpoint on port 8642"
+  },
+  "not_covered": [
+    "a real account switch (no accounts are enrolled on the test machine)",
+    "a gateway started by the switch worker while Hermes Desktop closes",
+    "the Hermes Desktop interface: plugin badge, dialog, enablement",
+    "a Hermes update between two builds",
+    "the packaged Desktop app (MSIX) install route"
+  ]
+}
