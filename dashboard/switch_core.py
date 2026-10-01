@@ -3,7 +3,10 @@ import base64
 import json
 import time
 from collections.abc import Mapping
-from settings import load_settings
+if __package__:  # imported by the dashboard API inside Hermes's web server
+    from .settings import load_settings
+else:  # the helper scripts and the test suite
+    from settings import load_settings
 
 class AccountView(Mapping):
     """Read current local settings on use; imports never touch machine state."""

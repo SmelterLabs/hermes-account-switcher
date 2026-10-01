@@ -11,11 +11,18 @@ import threading
 import time
 import urllib.request
 import psutil
-from switch_core import (CLAUDE, EMAILS, PROVIDERS, SwitchError, effective, health_warning, identify, lapsed_note,
-                         selected, summaries)
-from settings import SettingsError, load_settings, settings_snapshot, ensure_settings_unchanged
-from compat import UnsupportedRuntime, require_switch_interfaces, committed_venv, drain_control, safe_yaml_load
-from worker_launch import clean_env
+if __package__:  # imported by the dashboard API inside Hermes's web server
+    from .switch_core import (CLAUDE, EMAILS, PROVIDERS, SwitchError, effective, health_warning, identify,
+                              lapsed_note, selected, summaries)
+    from .settings import SettingsError, load_settings, settings_snapshot, ensure_settings_unchanged
+    from .compat import UnsupportedRuntime, require_switch_interfaces, committed_venv, drain_control, safe_yaml_load
+    from .worker_launch import clean_env
+else:  # the helper scripts and the test suite, with dashboard/ on their own sys.path
+    from switch_core import (CLAUDE, EMAILS, PROVIDERS, SwitchError, effective, health_warning, identify, lapsed_note,
+                             selected, summaries)
+    from settings import SettingsError, load_settings, settings_snapshot, ensure_settings_unchanged
+    from compat import UnsupportedRuntime, require_switch_interfaces, committed_venv, drain_control, safe_yaml_load
+    from worker_launch import clean_env
 
 ROOT = Path(os.environ.get('HERMES_HOME') or Path(os.environ.get('LOCALAPPDATA', tempfile.gettempdir())) / 'hermes')
 EXE = ROOT / 'hermes-agent/apps/desktop/release/win-unpacked/Hermes.exe'

@@ -159,3 +159,25 @@ def test_dead_operation_is_recovered_before_status(client, monkeypatch):
     assert data['blockers'] == [] and data['in_progress'] is False
     assert data['last_operation']['state'] == 'failed'
     assert not api.ops.LOCK.exists()
+
+
+def test_hermes_loads_the_api_without_putting_generic_modules_in_its_server(tmp_path):
+    """Hermes's web server imports plugin_api.py by file path, in its own long-lived process. The siblings
+    must not land there as top-level `settings`, `compat`, ... modules, nor dashboard/ on its sys.path."""
+    import subprocess
+    probe = """
+import importlib.util, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('hermes_dashboard_plugin_codex-account-switch', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+assert module.router.routes
+generic = {'settings', 'compat', 'switch_core', 'windows_ops', 'first_run', 'desktop_gate', 'worker_launch'}
+print(sorted(generic & set(sys.modules)), str(Path(sys.argv[1]).parent) in sys.path)
+"""
+    api_file = Path(__file__).parents[1] / 'dashboard' / 'plugin_api.py'
+    result = subprocess.run([sys.executable, '-c', probe, str(api_file)], cwd=tmp_path, capture_output=True,
+                            text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == ['[]', 'False']

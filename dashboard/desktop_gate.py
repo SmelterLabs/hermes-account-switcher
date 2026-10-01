@@ -1,7 +1,10 @@
 """Reversible admission gate for the actual Desktop RPC process, not a polling guess."""
 import threading
 import time
-from compat import gate_target, has_active_delegations, server as gateway_server
+if __package__:  # imported by the dashboard API inside Hermes's web server
+    from .compat import gate_target, has_active_delegations, server as gateway_server
+else:  # the test suite
+    from compat import gate_target, has_active_delegations, server as gateway_server
 
 
 # Requests that only READ for the screen: the project tree, session lists, usage meters, setup state.

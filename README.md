@@ -193,11 +193,14 @@ plugin contains no self-updater.
 - The backend answers on the loopback interface only, behind Hermes's own web authentication.
   The interface holds no credentials.
 - No token, refresh token or account id enters the dialog, a log or a receipt.
-- The only network calls are the provider checks: OpenAI's usage answer for the target Codex
-  login, Anthropic's account answer for the target Claude login.
+- The plugin's own network calls are the provider checks: OpenAI's usage answer for the target
+  Codex login, Anthropic's account answer for the target Claude login.
+- If the target Claude login has expired, the plugin first runs the `claude` CLI once against a
+  closed local port so the CLI renews its own token. That renewal goes to Anthropic and replaces
+  the token, including the refresh token, in that account's Hermes `claude-auth` folder.
 - Restart scope is exactly Hermes Desktop and the Hermes gateway. Nothing else is stopped,
   started, installed or configured.
-- No telemetry, no credential synchronization, no automatic rotation of any kind.
+- No telemetry, no credential synchronization, no automatic account rotation.
 
 ## Documentation
 

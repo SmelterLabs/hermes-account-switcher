@@ -1,21 +1,36 @@
 """Authenticated Desktop plugin API. Account secrets never leave this process."""
+from importlib import import_module
 import json
 import os
 from pathlib import Path
 import sys
 import time
+from types import ModuleType
 import uuid
 from fastapi import APIRouter, HTTPException, Request
 
 HERE = Path(__file__).resolve().parent
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
-from switch_core import SwitchError, describe, identify, normalize_request
-from settings import SettingsError, load_settings, settings_path
-from settings import settings_digest
-from compat import require_token, read_codex_pool, server as gateway_server
-import windows_ops as ops
-import first_run
+# Hermes's long-lived web server loads this file on its own. The sibling modules are imported there as
+# submodules of a package named after this plugin, never by putting dashboard/ on that process's sys.path,
+# where generic names like `settings` and `compat` would shadow, or be shadowed by, other modules. The test
+# suite imports this file as `plugin_api` from dashboard/ on its own sys.path and keeps the plain names.
+PACKAGE = 'codex_account_switch_dashboard'
+if __name__ != 'plugin_api' and PACKAGE not in sys.modules:
+    sys.modules[PACKAGE] = ModuleType(PACKAGE)
+    sys.modules[PACKAGE].__path__ = [str(HERE)]
+
+
+def sibling(name):
+    return import_module(name if __name__ == 'plugin_api' else f'{PACKAGE}.{name}')
+
+
+_core, _settings, _compat = sibling('switch_core'), sibling('settings'), sibling('compat')
+SwitchError, describe, identify, normalize_request = _core.SwitchError, _core.describe, _core.identify, _core.normalize_request
+SettingsError, load_settings, settings_path = _settings.SettingsError, _settings.load_settings, _settings.settings_path
+settings_digest = _settings.settings_digest
+require_token, read_codex_pool, gateway_server = _compat.require_token, _compat.read_codex_pool, _compat.server
+ops = sibling('windows_ops')
+first_run = sibling('first_run')
 
 router = APIRouter()
 gate = None
@@ -30,8 +45,7 @@ IN_PROGRESS = 'An account switch is already in progress.'
 def current_gate():
     global gate
     if gate is None:
-        from desktop_gate import install
-        gate = install()
+        gate = sibling('desktop_gate').install()
     return gate
 
 
@@ -210,8 +224,7 @@ def _switch_bound(body):
         pythonw = ops.runtime_python().with_name('pythonw.exe')
         if not pythonw.is_file():
             raise SwitchError('The hidden Windows Python launcher is unavailable.')
-        from worker_launch import launch
-        launch(pythonw, HERE / 'switch_worker.py', operation_id, ops.ROOT)
+        sibling('worker_launch').launch(pythonw, HERE / 'switch_worker.py', operation_id, ops.ROOT)
     except Exception as exc:
         ops.LOCK.unlink(missing_ok=True)
         record.update(state='failed', message=safe_error(exc))
