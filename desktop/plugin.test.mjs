@@ -72,9 +72,44 @@ async function openDialog(rest) {
 afterEach(() => {
   cleanup()
   delete window.hermesDesktop
+  delete globalThis.__activeConnectionId
 })
 
 describe('codex-account-switch desktop plugin', () => {
+  it('sends nothing while the active chat runs on a remote connection, and says why', async () => {
+    globalThis.__activeConnectionId = 'forge'
+    const rest = makeRest()
+    const { statusContribution } = registerWith(rest)
+    render(statusContribution.render())
+    fireEvent.click(await screen.findByRole('button', { name: 'Account switch: this PC only' }))
+    await screen.findByRole('dialog')
+    expect((await screen.findAllByText(/runs on another machine/)).length).toBeGreaterThan(0)
+    expect(rest.calls).toHaveLength(0)
+  })
+
+  it('treats the local connection, by id or by none at all, as this PC', async () => {
+    for (const id of ['local', null]) {
+      globalThis.__activeConnectionId = id
+      const rest = makeRest()
+      await openDialog(rest)
+      expect(count(rest, '/status')).toBeGreaterThan(0)
+      cleanup()
+    }
+  })
+
+  it('reaches this PC again once a local chat is active', async () => {
+    globalThis.__activeConnectionId = 'forge'
+    const rest = makeRest()
+    const { statusContribution } = registerWith(rest)
+    render(statusContribution.render())
+    fireEvent.click(await screen.findByRole('button', { name: 'Account switch: this PC only' }))
+    await screen.findByRole('dialog')
+    globalThis.__activeConnectionId = 'local'
+    fireEvent.click(await screen.findByRole('button', { name: 'Recheck' }))
+    await waitFor(() => expect(count(rest, '/preflight')).toBe(1))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Target Codex account' })).toBeTruthy())
+  })
+
   it('uses arbitrary account keys returned by the backend', async () => {
     const status = {
       ...STATUS_PERSONAL_IDLE,

@@ -6,6 +6,11 @@ export function cn(...values) {
 
 export function haptic() {}
 
+// Tests set globalThis.__activeConnectionId to stand in for the active chat's connection.
+export const host = {
+  activeConnectionId: () => globalThis.__activeConnectionId ?? null
+}
+
 export function Button({ children, variant: _variant, size: _size, asChild: _asChild, ...props }) {
   return createElement('button', { type: 'button', ...props }, children)
 }

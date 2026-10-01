@@ -6,7 +6,7 @@ not been proven is in [docs/acceptance.md](docs/acceptance.md).
 
 ## What this is
 
-A Windows-only Hermes Desktop plugin (ID `codex-account-switch`, version 1.2.0)
+A Windows-only Hermes Desktop plugin (ID `codex-account-switch`, version 1.2.1)
 that switches which Codex login and which Claude subscription account every local Hermes profile
 on the PC uses, through one idle-only, verified restart. It began as a private tool tailored to
 one machine and is packaged here for anyone. **The working behavior was preserved, not
@@ -118,6 +118,11 @@ checked against the login, never inferred from a label**.
   any Hermes module relaunches the process under another interpreter and exits. Every child goes
   through `worker_launch.clean_env`. The worker catches `BaseException`, so a process exit becomes
   a failed receipt.
+- **Desktop sends a plugin's requests to the machine the active chat runs on** (`host.activeConnectionId()`;
+  `ctx.rest` has no way to pin a connection). With a remote chat active, a host without the plugin
+  answers 404 "Plugin not found", and a host with it would switch that machine. The button sends
+  nothing unless the active connection is `local` or none, says so in its label and dialog, and
+  reads `host` through a namespace import so a Desktop without it loads the plugin as before.
 - **A backend never calls itself over HTTP:** `/preflight` answers for its own process directly.
 - **A single-profile Desktop backend has no `--profile` argument**; discovery names it `default`.
 - **The installer keeps everything except the live plugin out of `plugins/`:** Hermes loads every

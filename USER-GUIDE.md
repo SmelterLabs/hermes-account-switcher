@@ -168,6 +168,8 @@ None of these change which account is selected. Only a switch does that.
 | No account button in the status bar | A switch is off. Under Capabilities → Plugins → Installed, turn on the switch on the plugin's card, then click the card to open it and turn on **Desktop** as well: newer Hermes builds keep a separate switch for a plugin's button. Restart Hermes Desktop after enabling the plugin. |
 | An account has the wrong name | The name is the `label` in the settings file (see "Where things live"). Change it there and restart Hermes Desktop. |
 | The button reads "Codex: Unknown · Claude: Unknown" | The plugin is turned off in Hermes but its button is still on. Turn it back on with `hermes plugins enable codex-account-switch` and restart Hermes Desktop, or turn off the switch on its card under Capabilities → Plugins → Installed. |
+| The button reads "Account switch: this PC only" | The chat you have open runs on another machine (a remote or SSH connection). The button only works on this PC. Open a chat on **This device** and press **Recheck**. |
+| "The account-switch backend is not available (404)" | On an older Hermes Desktop this is how a chat on another machine shows up: open a chat on **This device** and press **Recheck**. If it stays, the plugin is not enabled for this profile or Hermes Desktop needs one restart. |
 | "Account-switch settings are missing" | Run `setup.cmd`. |
 | "The Hermes gateway on this PC runs as the Windows service …" | The settings were written while that gateway was stopped, so setup could not see it. Run the command the message gives (`setup.cmd service <name>`), then restart Hermes Desktop. |
 | "not logged in" next to a Claude account | That account has not been signed in. Run `setup.cmd claude <its key>`. |

@@ -1,5 +1,18 @@
 # Release notes — Hermes Account Switcher
 
+## 1.2.1
+
+- **The button works out which machine it is talking to.** Hermes Desktop sends a plugin's
+  requests to the machine the chat you have open runs on. With a chat on a remote or SSH
+  connection active, the button asked that machine, which answered "not available (404)",
+  and the dialog blamed the plugin's enablement. A machine with the plugin installed would
+  have been switched instead of this PC. The button now sends nothing while a remote chat is
+  active: it reads "Account switch: this PC only" and the dialog says to open a chat on This
+  device. Desktop builds that do not report the active connection behave as before, and their
+  404 message now names this cause first.
+- **Recheck reads the account status again** as well as re-running the safety check, so the
+  dialog recovers at once after you move to a local chat.
+
 ## 1.2.0
 
 The first public release: 1.2.0-rc.4, which was proven live on real machines with real

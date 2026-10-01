@@ -6,14 +6,15 @@ either or both. The status-bar dialog reports success only from a post-restart v
 receipt: an accepted request is never treated as a completed switch.
 
 - Plugin ID: `codex-account-switch`
-- Version: **1.2.0**
+- Version: **1.2.1**
 - Platform: **Windows only**
 - Scope: local Hermes profiles on this machine. Remote machines, the standalone Codex app, and
   Claude Code's own sessions are not touched.
 
 ## Status
 
-Version **1.2.0** is the first public release.
+Version **1.2.1** fixes the button when the chat you have open runs on another machine. 1.2.0 was
+the first public release.
 
 | Area | State |
 |---|---|

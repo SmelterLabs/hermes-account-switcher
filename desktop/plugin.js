@@ -8,6 +8,8 @@ import {
   DialogTitle,
   haptic
 } from '@hermes/plugin-sdk'
+// `host` is read through the namespace: a named import of an export an older Desktop lacks fails the whole plugin.
+import * as sdk from '@hermes/plugin-sdk'
 import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
@@ -27,6 +29,26 @@ function plainString(value) {
   return typeof value === 'string' && value.trim() ? value : null
 }
 
+// Desktop sends a plugin's requests to the machine the active chat runs on. The switch exists only on
+// this PC, so with a remote chat active no request is sent: a remote host answers 404, or, with the
+// plugin installed there, would switch that machine. Desktop builds without activeConnectionId behave as before.
+const REMOTE_TEXT = 'The chat you have open runs on another machine, so this button cannot reach this PC. Open a chat on This device, then press Recheck.'
+
+class RemoteChat extends Error {}
+
+function remoteConnection() {
+  try {
+    const id = sdk.host?.activeConnectionId?.()
+    return typeof id === 'string' && id.trim() && id !== 'local' ? id : null
+  } catch {
+    return null
+  }
+}
+
+function localOnly(rest) {
+  return (path, opts) => remoteConnection() ? Promise.reject(new RemoteChat(REMOTE_TEXT)) : rest(path, opts)
+}
+
 function isNotFound(error) {
   const values = [error?.status, error?.statusCode, error?.response?.status, error?.detail, error?.message, error]
   return values.some(value => value === 404 || (typeof value === 'string' && /(?:^|\D)404(?:\D|$)/.test(value)))
@@ -34,7 +56,7 @@ function isNotFound(error) {
 
 function errorText(error, fallback) {
   if (isNotFound(error)) {
-    return 'The account-switch backend is not available (404). The plugin may not be enabled for this profile, or Hermes Desktop needs one restart; reload the plugin after it returns.'
+    return 'The account-switch backend is not available (404). If the chat you have open runs on another machine, open a chat on This device and press Recheck. Otherwise the plugin may not be enabled for this profile, or Hermes Desktop needs one restart.'
   }
   const candidate =
     error && typeof error === 'object' ? plainString(error.detail) || plainString(error.message) : plainString(error)
@@ -483,6 +505,7 @@ const EMPTY_STATUS = normalizeStatus({ codex: { selected: null, accounts: [] }, 
 function AccountStatusButton({ rest }) {
   const [status, setStatus] = useState(EMPTY_STATUS)
   const [statusError, setStatusError] = useState(null)
+  const [remote, setRemote] = useState(false)
   const [preflight, setPreflight] = useState(null)
   const [checkState, setCheckState] = useState('idle')
   const [checkError, setCheckError] = useState(null)
@@ -504,6 +527,7 @@ function AccountStatusButton({ rest }) {
       const response = await rest('/status')
       if (disposed.current) return
       const next = normalizeStatus(response)
+      setRemote(false)
       setStatus(next)
       setStatusError(next.valid ? null : 'The account status response was incomplete; confirmation is disabled.')
       const notice = operationNotice(next.last_operation)
@@ -515,6 +539,7 @@ function AccountStatusButton({ rest }) {
       return next
     } catch (error) {
       if (disposed.current) return
+      setRemote(error instanceof RemoteChat)
       setStatus(EMPTY_STATUS)
       setStatusError(errorText(error, 'Unable to read account status.'))
     }
@@ -646,7 +671,7 @@ function AccountStatusButton({ rest }) {
   // A provider with no accounts set up is left off the badge; with nothing known yet, both read "Unknown".
   const hasCodex = status.codex.accounts.length > 0
   const hasClaude = status.claude.accounts.length > 0
-  const statusLabel = status.setup_needed ? 'Account switch: set up' : [
+  const statusLabel = remote ? 'Account switch: this PC only' : status.setup_needed ? 'Account switch: set up' : [
     hasCodex || !hasClaude ? `Codex: ${codexLabel(status)}` : null,
     hasClaude || !hasCodex ? `Claude: ${claudeLabel(status)}` : null
   ].filter(Boolean).join(' · ')
@@ -682,7 +707,7 @@ function AccountStatusButton({ rest }) {
       }) : jsx(SwitchDialog, {
         onConfirm: () => void submitSwitch(),
         onOpenChange: setOpen,
-        onRecheck: () => void runPreflight(),
+        onRecheck: () => void openChecks(),
         onCodexChange: setCodexTarget,
         onClaudeChange: setClaudeTarget,
         open,
@@ -709,7 +734,7 @@ export default {
       id: 'status',
       area: 'statusBar.right',
       order: 120,
-      render: () => jsx(AccountStatusButton, { rest: ctx.rest })
+      render: () => jsx(AccountStatusButton, { rest: localOnly(ctx.rest) })
     })
   }
 }
