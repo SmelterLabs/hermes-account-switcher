@@ -1,42 +1,52 @@
 """Authenticated Desktop plugin API. Account secrets never leave this process."""
+from importlib import import_module
 import json
 import os
 from pathlib import Path
 import sys
 import time
+from types import ModuleType
 import uuid
 from fastapi import APIRouter, HTTPException, Request
 
 HERE = Path(__file__).resolve().parent
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
-from switch_core import SwitchError, describe, identify, normalize_request
-from settings import SettingsError, load_settings, settings_path
-from settings import settings_digest
-from compat import require_token, read_codex_pool, server as gateway_server
-import windows_ops as ops
-import first_run
+# Hermes's long-lived web server loads this file on its own. The sibling modules are imported there as
+# submodules of a package named after this plugin, never by putting dashboard/ on that process's sys.path,
+# where generic names like `settings` and `compat` would shadow, or be shadowed by, other modules. The test
+# suite imports this file as `plugin_api` from dashboard/ on its own sys.path and keeps the plain names.
+PACKAGE = 'codex_account_switch_dashboard'
+if __name__ != 'plugin_api' and PACKAGE not in sys.modules:
+    sys.modules[PACKAGE] = ModuleType(PACKAGE)
+    sys.modules[PACKAGE].__path__ = [str(HERE)]
+
+
+def sibling(name):
+    return import_module(name if __name__ == 'plugin_api' else f'{PACKAGE}.{name}')
+
+
+_core, _settings, _compat = sibling('switch_core'), sibling('settings'), sibling('compat')
+SwitchError, describe, identify, normalize_request = _core.SwitchError, _core.describe, _core.identify, _core.normalize_request
+SettingsError, load_settings, settings_path = _settings.SettingsError, _settings.load_settings, _settings.settings_path
+settings_digest = _settings.settings_digest
+read_codex_pool, desktop_idle_blockers = _compat.read_codex_pool, _compat.desktop_idle_blockers
+ops = sibling('windows_ops')
+first_run = sibling('first_run')
 
 router = APIRouter()
-gate = None
 SCOPE = 'All Hermes profiles on this PC'
 # What status answers before the first setup: nothing selected, nothing to choose from, and the reason.
 NOT_SET_UP = {'setup_needed': True, 'codex': {'selected': None, 'accounts': [], 'effective': None, 'warnings': []},
               'claude': {'selected': None, 'state': 'unset', 'accounts': []}, 'last_operation': None,
               'in_progress': False, 'blockers': [], 'scope': SCOPE}
 IN_PROGRESS = 'An account switch is already in progress.'
-
-
-def current_gate():
-    global gate
-    if gate is None:
-        from desktop_gate import install
-        gate = install()
-    return gate
+# What answers "is this Desktop backend idle": Hermes's own idle proof for this process. There is no
+# admission hold of the plugin's own; see TECHNICAL-GUIDE.md, "The switch transaction".
+ACTIVITY_CHECK = 'hermes_cli.web_server_idle_proof.idle_proof'
 
 
 def authorize(request):
-    require_token(request)
+    """Hermes's web server already requires its session token on every plugin route (its auth
+    middleware; only its public paths are exempt). This adds: the caller is on this PC."""
     if not request.client or request.client.host not in ('127.0.0.1', '::1', 'testclient'):
         raise HTTPException(403, 'This switch is only available locally on this PC.')
 
@@ -46,33 +56,15 @@ def safe_error(exc):
 
 
 def local_state():
-    guard = current_gate()
-    server = gateway_server()
     # Each profile owns its logins (#111724); a profile without Codex rows does not use Codex.
     rows = read_codex_pool()
     acc = identify(rows) if rows and ops.EMAILS else None
-    live = []
-    with server._sessions_lock:
-        for session in server._sessions.values():
-            pool = getattr(session.get('agent'), '_credential_pool', None)
-            if pool is None or pool.provider != 'openai-codex':
-                continue
-            rows = [e.to_dict() for e in pool.entries()]
-            if not ops.EMAILS:
-                continue
-            live_accounts = identify(rows)
-            current_entry = pool.peek()
-            current = next((key for key, value in live_accounts.items()
-                            if current_entry is not None and any(
-                                entry['id'] == current_entry.id for entry in value['entries'])), None)
-            live.append({'selected': current})
-    with guard.lock:
-        blockers = guard.busy()
+    blockers = desktop_idle_blockers()
     return {'pid': os.getpid(), 'selected': ops.selected(acc) if acc else None, 'uses_codex': acc is not None,
-            'live_pools': live,
             # What the Claude plugin will hand the `claude` CLI from THIS process (the .env it loaded at start).
             'claude_config_dir': os.environ.get(ops.CLAUDE_VAR) or None,
-            'blockers': blockers, 'guard_installed': getattr(server, getattr(guard, 'target', 'handle_request'), None) == guard.dispatch}
+            'blockers': blockers,
+            'activity_check': None if blockers == [_compat.IDLE_UNAVAILABLE] else ACTIVITY_CHECK}
 
 
 @router.get('/local-state')
@@ -83,21 +75,6 @@ def get_local_state(request: Request):
             return local_state()
     except Exception as exc:
         raise HTTPException(409, safe_error(exc)) from None
-
-
-@router.post('/freeze')
-def freeze(request: Request):
-    authorize(request)
-    with ops.bound_settings():
-        return current_gate().freeze()
-
-
-@router.post('/release')
-def release(request: Request):
-    authorize(request)
-    with ops.bound_settings():
-        current_gate().release()
-    return {'ok': True}
 
 
 @router.get('/status')
@@ -210,8 +187,7 @@ def _switch_bound(body):
         pythonw = ops.runtime_python().with_name('pythonw.exe')
         if not pythonw.is_file():
             raise SwitchError('The hidden Windows Python launcher is unavailable.')
-        from worker_launch import launch
-        launch(pythonw, HERE / 'switch_worker.py', operation_id, ops.ROOT)
+        sibling('worker_launch').launch(pythonw, HERE / 'switch_worker.py', operation_id, ops.ROOT)
     except Exception as exc:
         ops.LOCK.unlink(missing_ok=True)
         record.update(state='failed', message=safe_error(exc))

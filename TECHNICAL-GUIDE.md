@@ -6,7 +6,7 @@ not been proven is in [docs/acceptance.md](docs/acceptance.md).
 
 ## What this is
 
-A Windows-only Hermes Desktop plugin (ID `codex-account-switch`, version 1.2.1)
+A Windows-only Hermes Desktop plugin (ID `codex-account-switch`, version 1.2.2)
 that switches which Codex login and which Claude subscription account every local Hermes profile
 on the PC uses, through one idle-only, verified restart. It began as a private tool tailored to
 one machine and is packaged here for anyone. **The working behavior was preserved, not
@@ -23,14 +23,13 @@ change to Hermes itself; and any credential management beyond selection.
 | `dashboard/switch_core.py` | Account identity and the order of the switch transaction. No IO. |
 | `dashboard/windows_ops.py` | Store discovery, identity checks, idle gates, stop, apply, start, verify, recovery |
 | `dashboard/settings.py` | Validated settings loader; settings live outside the plugin and hold no credentials |
-| `dashboard/compat.py` | The one place Hermes's private interfaces are touched; refuses before any change |
+| `dashboard/compat.py` | The one place Hermes is called: public names only, nothing rebound; refuses before any change |
 | `dashboard/env_set.py` | One `.env` key per Hermes home, through Hermes's own config writer |
-| `dashboard/plugin_api.py` | Loopback routes behind Hermes's sign-in: `/status`, `/preflight`, `/switch`, `/setup` (what a first run found, and saving it), `/local-state`, `/freeze`, `/release` |
+| `dashboard/plugin_api.py` | Loopback routes behind Hermes's sign-in: `/status`, `/preflight`, `/switch`, `/setup` (what a first run found, and saving it), `/local-state` |
 | `dashboard/first_run.py` | The one implementation of setup, used by `setup.cmd`, by an agent and by the dialog: finds the installation, the Codex accounts signed in, the Claude logins under `claude-auth` and a Windows service that runs the gateway; writes the settings |
-| `dashboard/desktop_gate.py` | Reversible hold on Hermes Desktop's request dispatcher |
 | `dashboard/switch_worker.py`, `worker_launch.py` | Hidden one-shot worker that outlives Hermes Desktop |
 | `desktop/plugin.js` | Status-bar button and dialog; imports only the plugin kit and React |
-| `claude_login.py` | Guided Claude sign-in; restarts itself under Hermes's Python; a login as the wrong account is refused |
+| `claude_login.py` | Guided Claude sign-in; restarts itself under Hermes's Python; a login as the wrong account is refused and its `.credentials.json` deleted |
 | `setup.cmd` | What a user runs: install plus settings setup, with the Python Hermes brings; `claude <key> <email>` and `profile <name>` modes |
 | `setup_settings.py` | The command line of `first_run.py`: asks for names and writes after a yes; `--show` writes nothing, `--yes --name "email=Name"` asks nothing |
 | `install.py` | Offline installer: install, roll back, uninstall. `--home` mandatory; never changes enablement; refuses over files it did not install |
@@ -47,7 +46,9 @@ The release is a "unified package": backend code under
 
 1. **Check** (nothing changed): stores found; the target Codex login confirmed with OpenAI; the
    target Claude login confirmed with Anthropic.
-2. **Freeze**: a drain marker per gateway home, then a hold on every Hermes Desktop backend.
+2. **Freeze**: a drain marker per gateway home, then Hermes's own idle proof asked again of every
+   Hermes Desktop backend. There is no hold on Desktop requests: work that starts between this
+   answer and the window closing is the accepted gap (see the first gotcha).
 3. **Stop**: a polite close of the exact Desktop window, wait for its process tree, stop the
    gateway.
 4. **Apply**: `hermes auth priority` and `hermes auth reset` per Codex store; `.env` write or
@@ -89,13 +90,30 @@ checked against the login, never inferred from a label**.
 6. Compatibility is proven by checking at run time and by live receipts, not by files surviving.
 7. The release is built from an allowlist with a privacy scan; development history is never
    published.
+8. The plugin extends Hermes only through public surfaces (Hermes catalog policy, upstream pull
+   request 130795): no Hermes function is replaced, wrapped or rebound, and no underscore-private
+   name is read. Where that costs safety, the cost is documented rather than patched around.
 
 ## Gotchas
 
-- **The hold wraps `_handle_admitted_request`, not `handle_request`:** current Hermes sends
-  long-running requests (`shell.exec`, `slash.exec`, `llm.oneshot`, `bot_relay.deliver`, …) to a
-  worker pool that skips `handle_request`. `compat.gate_target` picks the function both paths
-  share, and `compat.require_gated_admission` refuses a dispatcher that has any other route.
+- **"Is Desktop idle" is Hermes's own answer, and there is no admission hold.** `/local-state`
+  calls `hermes_cli.web_server_idle_proof.idle_proof()`, the probe Hermes Desktop itself uses
+  before retiring a backend: sessions running, starting or queued, live run or build threads,
+  background delegations, scheduled jobs mid-run, and prompts waiting on a person. `None`
+  (unreadable) is a blocker, never idle; a Hermes without the function refuses switching. Up to
+  1.2.1 the plugin also rebound the Desktop RPC dispatcher to hold new requests back for three
+  minutes; the catalog policy forbids rebinding core functions, so the hold is gone and
+  `WindowsOps.freeze` asks the idle proof a second time just before the close instead. The window
+  between that answer and the close is open; the user guide says so.
+- **Hermes already authenticates plugin routes.** Its web server requires the session token on
+  every `/api/` path outside its public list; `authorize()` only adds the loopback check.
+- **The dashboard siblings are imported as submodules of `codex_account_switch_dashboard`** when
+  Hermes loads `plugin_api.py` by file path, never by putting `dashboard/` on the shared web
+  server's `sys.path`, where `settings` and `compat` would shadow other modules. The helper
+  scripts and the test suite still import the plain names. Thanks to teknium1 for the fix.
+- **Hermes's venv Python re-executes a script under another interpreter** when run with site
+  processing on; the real-host import check runs it with `-I -S` and adds the venv's
+  `site-packages` by hand (see Testing).
 - **Never import Hermes from a live checkout with a different `HERMES_HOME`:** it republishes that
   checkout's launchers pointing into the other home. Probes run against an exported copy.
 - **Two gateway lifecycles, chosen by `gateway_service`:** `null` stops and starts the gateway
@@ -118,11 +136,6 @@ checked against the login, never inferred from a label**.
   any Hermes module relaunches the process under another interpreter and exits. Every child goes
   through `worker_launch.clean_env`. The worker catches `BaseException`, so a process exit becomes
   a failed receipt.
-- **Desktop sends a plugin's requests to the machine the active chat runs on** (`host.activeConnectionId()`;
-  `ctx.rest` has no way to pin a connection). With a remote chat active, a host without the plugin
-  answers 404 "Plugin not found", and a host with it would switch that machine. The button sends
-  nothing unless the active connection is `local` or none, says so in its label and dialog, and
-  reads `host` through a namespace import so a Desktop without it loads the plugin as before.
 - **A backend never calls itself over HTTP:** `/preflight` answers for its own process directly.
 - **A single-profile Desktop backend has no `--profile` argument**; discovery names it `default`.
 - **The installer keeps everything except the live plugin out of `plugins/`:** Hermes loads every
@@ -173,8 +186,15 @@ npm ci                             # interface test dependencies
 npm test                           # interface suite
 ```
 
-Current counts: 288 backend, 31 interface. Live evidence and what is still not run:
+Current counts: 280 backend, 34 interface. Live evidence and what is still not run:
 [docs/acceptance.md](docs/acceptance.md).
+
+The real-host import check loads `dashboard/plugin_api.py` the way Hermes's web server does
+(`spec_from_file_location`, in Hermes's own Python environment with the live checkout
+importable), lists the mounted routes, asserts no generic sibling name and no `dashboard/` entry
+landed in that interpreter, runs `compat.require_switch_interfaces()` and reads the idle proof.
+It reads only. Run it with Hermes's venv `python.exe -I -S`, passing the venv's `site-packages`
+(and its `win32`, `win32\lib`) as extra path entries.
 
 ## Further reading
 

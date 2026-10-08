@@ -14,7 +14,10 @@ import subprocess
 import time
 import urllib.request
 
-from settings import SettingsError, _parse_settings, settings_path
+if __package__:  # imported by the dashboard API inside Hermes's web server
+    from .settings import SettingsError, _parse_settings, settings_path
+else:  # the helper scripts and the test suite
+    from settings import SettingsError, _parse_settings, settings_path
 
 PLUGIN = 'codex-account-switch'
 DESKTOP = Path('apps/desktop/release/win-unpacked/Hermes.exe')

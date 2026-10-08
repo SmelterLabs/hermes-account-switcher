@@ -193,6 +193,28 @@ def test_desktop_only_switch_never_touches_a_gateway(desktop_only, recorded, mon
     assert launched == [True] and recorded == []
 
 
+def test_freeze_asks_every_backend_again_and_refuses_new_work(desktop_only, monkeypatch):
+    """No admission hold of the plugin's own: the second answer from Hermes's idle proof, taken just
+    before the close, is what stands between preflight and the window closing."""
+    asked = []
+    def call(backend, route, body=None):
+        asked.append((backend['profile'], route, body))
+        return {'blockers': ['A conversation is running, initializing, or waiting for input.']
+                if backend['profile'] == 'second' else []}
+    monkeypatch.setattr(ops, 'call', call)
+    monkeypatch.setattr(ops, 'ensure_settings_unchanged', lambda: None)
+    monkeypatch.setattr(ops, 'RECEIPT', desktop_only / 'receipt.json')
+    monkeypatch.setattr(ops, 'backends', lambda main: [{'pid': 1, 'profile': 'default'}, {'pid': 2, 'profile': 'second'}])
+    worker = ops.WindowsOps({})
+    worker.gateway = False
+    worker.old_main = SimpleNamespace(pid=7)
+    worker.bs = [{'pid': 1, 'profile': 'default'}, {'pid': 2, 'profile': 'second'}]
+    with pytest.raises(SwitchError, match='Desktop work started during preflight'):
+        worker.freeze()
+    assert asked == [('default', '/local-state', None), ('second', '/local-state', None)]
+    worker.unfreeze()  # nothing to release: there is no hold
+
+
 def test_a_gateway_appearing_mid_switch_stops_a_desktop_only_switch(desktop_only, monkeypatch):
     monkeypatch.setattr(ops, 'service', lambda: {'status': 'running', 'pid': 40, 'born': 5.0})
     worker = ops.WindowsOps({})

@@ -6,15 +6,17 @@ either or both. The status-bar dialog reports success only from a post-restart v
 receipt: an accepted request is never treated as a completed switch.
 
 - Plugin ID: `codex-account-switch`
-- Version: **1.2.1**
+- Version: **1.2.2**
 - Platform: **Windows only**
 - Scope: local Hermes profiles on this machine. Remote machines, the standalone Codex app, and
   Claude Code's own sessions are not touched.
 
 ## Status
 
-Version **1.2.1** fixes the button when the chat you have open runs on another machine. 1.2.0 was
-the first public release.
+Version **1.2.2** answers the Hermes catalog review: the plugin now touches Hermes only through
+public surfaces, and three documentation claims were made true (see
+[docs/release-notes.md](docs/release-notes.md)). 1.2.1 fixed the button when the chat you have
+open runs on another machine. 1.2.0 was the first public release.
 
 | Area | State |
 |---|---|
@@ -109,8 +111,9 @@ setup.cmd claude personal me@example.com
 It adds the account to the settings and starts Claude's own sign-in. No browser opens by itself:
 the sign-in link is put on your clipboard. Open it in a **private** browser window, sign in as
 that account, approve, and paste the code the page shows back into the terminal. The plugin then
-asks Anthropic who signed in; a login made as the wrong account is refused. To sign an account in
-again later: `setup.cmd claude personal`.
+asks Anthropic who signed in; a login made as the wrong account is refused and its login file is
+deleted from that folder, so the folder never holds a login for another account. To sign an
+account in again later: `setup.cmd claude personal`.
 
 ### More than one profile
 
@@ -193,11 +196,16 @@ plugin contains no self-updater.
 - The backend answers on the loopback interface only, behind Hermes's own web authentication.
   The interface holds no credentials.
 - No token, refresh token or account id enters the dialog, a log or a receipt.
-- The only network calls are the provider checks: OpenAI's usage answer for the target Codex
-  login, Anthropic's account answer for the target Claude login.
+- The plugin's own network calls are the provider checks: OpenAI's usage answer for the target
+  Codex login, Anthropic's account answer for the target Claude login.
+- If the target Claude login has expired, the plugin first runs the `claude` CLI once against a
+  closed local port so the CLI renews its own token. That renewal goes to Anthropic and replaces
+  the token, including the refresh token, in that account's Hermes `claude-auth` folder.
 - Restart scope is exactly Hermes Desktop and the Hermes gateway. Nothing else is stopped,
   started, installed or configured.
-- No telemetry, no credential synchronization, no automatic rotation of any kind.
+- The plugin changes nothing inside Hermes: no function of Hermes is replaced, wrapped or
+  rebound, and no private name is read. Whether Hermes is idle is Hermes's own answer.
+- No telemetry, no credential synchronization, no automatic account rotation.
 
 ## Documentation
 
@@ -205,7 +213,7 @@ plugin contains no self-updater.
 |---|---|
 | [USER-GUIDE.md](USER-GUIDE.md) | Plain-language walkthrough and troubleshooting |
 | [TECHNICAL-GUIDE.md](TECHNICAL-GUIDE.md) | How it is built, and the traps already found |
-| [docs/compatibility.md](docs/compatibility.md) | Verified Hermes builds and the private interfaces used |
+| [docs/compatibility.md](docs/compatibility.md) | Verified Hermes builds and the Hermes interfaces used |
 | [docs/acceptance.md](docs/acceptance.md) | What has been run, with receipts, and what has not |
 | [docs/release-notes.md](docs/release-notes.md) | Changes per version |
 

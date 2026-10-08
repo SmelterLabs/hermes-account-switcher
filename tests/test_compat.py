@@ -16,45 +16,32 @@ def test_missing_private_interface_fails_closed(monkeypatch):
         compat.require_switch_interfaces()
 
 
-def _dispatcher(source):
-    """A stand-in tui_gateway.server whose functions reference the same names the real ones do."""
-    from types import SimpleNamespace
-    scope = {}
-    exec(source, scope)
-    return SimpleNamespace(**{name: value for name, value in scope.items() if callable(value)})
+def test_only_public_hermes_names_are_required():
+    """Catalog policy: a plugin extends Hermes through public surfaces only. No underscore name,
+    and nothing from the Desktop RPC server, is part of the contract."""
+    for module_name, names in compat.INTERFACES.items():
+        assert not module_name.startswith('tui_gateway'), module_name
+        for name in names:
+            assert not name.startswith('_'), f'{module_name}.{name}'
+    assert 'hermes_cli.web_server_idle_proof' in compat.INTERFACES
+    source = (Path(__file__).parents[1] / 'dashboard' / 'compat.py').read_text(encoding='utf-8')
+    for private in ('_sessions', '_require_token', '_handle_admitted_request', '_session_pending_kind',
+                    '_session_has_active_delegations', 'setattr('):
+        assert private not in source, private
 
 
-CURRENT = '''
-def _handle_admitted_request(req): return req
-def handle_request(req): return _handle_admitted_request(req)
-def dispatch(req):
-    if req.get('long'):
-        def run(): return _handle_admitted_request(req)
-        return run()
-    return handle_request(req)
-'''
-OLDER = '''
-def handle_request(req): return req
-def dispatch(req): return handle_request(req)
-'''
-NEW_BYPASS = CURRENT + '''
-def _handle_streamed_request(req): return req
-def dispatch(req):
-    if req.get('stream'): return _handle_streamed_request(req)
-    return handle_request(req)
-'''
-
-
-@pytest.mark.parametrize('source,target', [(CURRENT, '_handle_admitted_request'), (OLDER, 'handle_request')])
-def test_known_dispatchers_are_fully_gated(source, target):
-    server = _dispatcher(source)
-    assert compat.gate_target(server) == target
-    compat.require_gated_admission(server)
-
-
-def test_a_dispatcher_with_an_ungated_route_is_refused():
-    with pytest.raises(ValueError):
-        compat.require_gated_admission(_dispatcher(NEW_BYPASS))
+def test_a_hermes_without_the_idle_proof_is_refused(monkeypatch):
+    import types
+    real_import = compat.import_module
+    def missing_idle_proof(name):
+        if name == 'hermes_cli.web_server_idle_proof':
+            raise ImportError(name)
+        return types.SimpleNamespace(**{fn: (lambda *a, **k: None) for fn in compat.INTERFACES.get(name, {})})
+    monkeypatch.setattr(compat, 'import_module', missing_idle_proof)
+    monkeypatch.setattr(compat, 'signature', lambda fn: types.SimpleNamespace(
+        parameters={k: None for k in ('project_root', 'home', 'principal', 'suppress_notification', 'provider_id', 'key', 'value')}))
+    with pytest.raises(compat.UnsupportedRuntime, match='safety interfaces'):
+        compat.require_switch_interfaces()
 
 
 def test_unsupported_runtime_never_stages_or_freezes(monkeypatch, tmp_path):

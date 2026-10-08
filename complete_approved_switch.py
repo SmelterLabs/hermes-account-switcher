@@ -54,11 +54,10 @@ def run(request):
             assert status['last_operation']['state']=='complete'
             if request.get('codex'):
                 assert status['codex']['selected']==request['codex'] and local['selected']==request['codex']
-                assert all(p['selected']==request['codex'] for p in local['live_pools'])
             if request.get('claude'):
                 assert status['claude']['selected']==request['claude']
                 assert ops._same_dir(local.get('claude_config_dir') or '',request['claude'])
-            states.append({'profile':b['profile'],'pid':b['pid'],'selected':local['selected'],'live_pools':local['live_pools'],'claude_config_dir':local.get('claude_config_dir')})
+            states.append({'profile':b['profile'],'pid':b['pid'],'selected':local['selected'],'claude_config_dir':local.get('claude_config_dir')})
         assert states
         result.update(state='verified',new_desktop_pid=main.pid,new_gateway_pid=ops.service()['pid'],profiles=states,warnings=receipt.get('warnings',[]))
     except Exception as exc:

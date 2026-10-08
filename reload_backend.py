@@ -1,8 +1,8 @@
 """One-shot Desktop-only plugin activation; never changes accounts or services.
 
 This is deliberately separate from the account-switch worker. It uses the
-gateway's existing admission drain and freezes every plugin gate. A missing
-guard is never treated as idle.
+gateway's existing admission drain and Hermes's own idle proof, asked of every
+Desktop backend through the plugin. A missing idle check is never treated as idle.
 """
 import ctypes
 from ctypes import wintypes
@@ -47,17 +47,16 @@ def backend_snapshot(backend):
         local = ops.call(backend, '/local-state')
         result.update(
             plugin_route='ready',
-            guard_installed=bool(local.get('guard_installed')),
+            activity_check=local.get('activity_check'),
             selected=local.get('selected'),
             uses_codex=local.get('uses_codex'),
-            live_pools=local.get('live_pools', []),
             blockers=list(local.get('blockers', [])),
         )
-        if not result['guard_installed']:
-            result['blockers'].append('Desktop admission guard is not installed.')
+        if not result['activity_check'] and not result['blockers']:
+            result['blockers'].append("Hermes's idle check is unavailable in this backend.")
         return result
     except ops.SwitchError:
-        raise ops.SwitchError(f"The account-switch guard is unavailable in {backend['profile']}.") from None
+        raise ops.SwitchError(f"The account-switch idle check is unavailable in {backend['profile']}.") from None
 
 
 def safety_snapshot(main, expected_inventory):
@@ -106,11 +105,11 @@ def wait_for_idle(main, expected_inventory, record, timeout=600):
 
 
 def acquire_admission_boundary(backends, record):
-    """Close shared gateway admission, then freeze every mounted plugin gate."""
+    """Close shared gateway admission, then ask every Desktop backend once more whether it is idle."""
     drain = ops.drain_control()
 
     drained = []
-    frozen = []
+    checked = []
     try:
         for home, _ in ops.gateway_states():
             if drain.drain_requested(home=home):
@@ -129,23 +128,17 @@ def acquire_admission_boundary(backends, record):
             raise ops.SwitchError('Gateway work started while admission was closing.')
 
         for backend in backends:
-            result = ops.call(backend, '/freeze', {})
-            if result.get('ok') is not True:
+            if ops.call(backend, '/local-state').get('blockers', ['unknown']):
                 raise ops.SwitchError('Desktop work started during the admission boundary.')
-            frozen.append(backend)
+            checked.append(backend)
         record['admission'] = {
             'gateway_drain': True,
-            'plugin_gates_frozen': [backend['profile'] for backend in frozen],
+            'desktop_backends_idle': [backend['profile'] for backend in checked],
             'inventory_unchanged': True,
         }
         ops.atomic(RESULT, record)
-        return drained, frozen
+        return drained, checked
     except Exception:
-        for backend in frozen:
-            try:
-                ops.call(backend, '/release', {})
-            except ops.SwitchError:
-                pass
         clear_our_drains(drained)
         raise
 
@@ -195,11 +188,9 @@ def verify_reopened(old_main, old_desktop_created, old_inventory, selected, star
                 status = ops.call(backend, '/status')
             except ops.SwitchError:
                 return False
-            if not local.get('guard_installed'):
+            if not local.get('activity_check'):
                 return False
             if local.get('uses_codex', True) and local.get('selected') != selected:
-                return False
-            if any(pool.get('selected') != selected for pool in local.get('live_pools', [])):
                 return False
             if (status.get('codex') or {}).get('selected') != selected or status.get('blockers'):
                 return False
@@ -208,8 +199,7 @@ def verify_reopened(old_main, old_desktop_created, old_inventory, selected, star
                 'plugin_status': 'ok', 'plugin_local_state': 'ok',
                 'selected': local.get('selected'),
                 'uses_codex': local.get('uses_codex'),
-                'guard_installed': local.get('guard_installed'),
-                'live_pools': local.get('live_pools', []),
+                'activity_check': local.get('activity_check'),
                 'status_blockers': status.get('blockers', []),
                 'status_scope': status.get('scope'),
             })
@@ -250,7 +240,6 @@ def run():
     ops.atomic(RESULT, record)
     main = None
     old_inventory = []
-    frozen = []
     drained = []
     try:
         main = ops.desktop()
@@ -267,7 +256,7 @@ def run():
         safety = wait_for_idle(main, old_inventory, record)
         record.update(state='closing_admission', preflight=safety)
         ops.atomic(RESULT, record)
-        drained, frozen = acquire_admission_boundary(old_backends, record)
+        drained, _checked = acquire_admission_boundary(old_backends, record)
         if inventory(ops.backends(main)) != old_inventory:
             raise ops.SwitchError('Desktop backend inventory changed after admission closed.')
         record['state'] = 'reopening_desktop'
@@ -299,11 +288,6 @@ def run():
             except ops.SwitchError:
                 launch_desktop()
     finally:
-        for backend in frozen:
-            try:
-                ops.call(backend, '/release', {})
-            except ops.SwitchError:
-                pass
         record['finished_at'] = time.time()
         ops.atomic(RESULT, record)
 

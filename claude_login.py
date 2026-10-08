@@ -41,7 +41,12 @@ except ImportError:
                                      env={**os.environ, 'ACCOUNT_SWITCH_RESTARTED': '1'}))
 
 import windows_ops as ops
-from switch_core import CLAUDE, SwitchError
+from switch_core import CLAUDE, SwitchError, WrongAccount
+
+
+def discard_login(folder):
+    """Remove the login the CLI just wrote, and nothing else in the folder."""
+    (Path(folder) / '.credentials.json').unlink(missing_ok=True)
 
 
 def enrol(key):
@@ -103,9 +108,15 @@ def enrol(key):
     # CLI output may contain account or authorization metadata. Do not echo it.
     try:
         identity = ops.claude_identity(key)
+    except WrongAccount as exc:
+        # The folder may never hold a login for another account: a switch would hand it to Hermes as this one.
+        discard_login(folder)
+        print(f'FAILED: {exc}')
+        print('That login was discarded; the folder holds no login now. Run this again in a private browser window.')
+        return False
     except SwitchError as exc:
         print(f'FAILED: {exc}')
-        print('The CLI login remains in the configured folder; switching stays blocked until identity verifies.')
+        print('The login could not be verified and stays in the folder; switching stays blocked until it verifies.')
         return False
     print(f'OK: {label} folder holds a login for {identity["email"]}.')
     return True

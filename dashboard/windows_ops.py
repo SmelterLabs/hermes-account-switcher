@@ -11,11 +11,18 @@ import threading
 import time
 import urllib.request
 import psutil
-from switch_core import (CLAUDE, EMAILS, PROVIDERS, SwitchError, effective, health_warning, identify, lapsed_note,
-                         selected, summaries)
-from settings import SettingsError, load_settings, settings_snapshot, ensure_settings_unchanged
-from compat import UnsupportedRuntime, require_switch_interfaces, committed_venv, drain_control, safe_yaml_load
-from worker_launch import clean_env
+if __package__:  # imported by the dashboard API inside Hermes's web server
+    from .switch_core import (CLAUDE, EMAILS, PROVIDERS, SwitchError, WrongAccount, effective, health_warning, identify,
+                              lapsed_note, selected, summaries)
+    from .settings import SettingsError, load_settings, settings_snapshot, ensure_settings_unchanged
+    from .compat import UnsupportedRuntime, require_switch_interfaces, committed_venv, drain_control, safe_yaml_load
+    from .worker_launch import clean_env
+else:  # the helper scripts and the test suite, with dashboard/ on their own sys.path
+    from switch_core import (CLAUDE, EMAILS, PROVIDERS, SwitchError, WrongAccount, effective, health_warning, identify, lapsed_note,
+                             selected, summaries)
+    from settings import SettingsError, load_settings, settings_snapshot, ensure_settings_unchanged
+    from compat import UnsupportedRuntime, require_switch_interfaces, committed_venv, drain_control, safe_yaml_load
+    from worker_launch import clean_env
 
 ROOT = Path(os.environ.get('HERMES_HOME') or Path(os.environ.get('LOCALAPPDATA', tempfile.gettempdir())) / 'hermes')
 EXE = ROOT / 'hermes-agent/apps/desktop/release/win-unpacked/Hermes.exe'
@@ -471,7 +478,7 @@ def claude_identity(key):
                     time.sleep(2)
         if email:
             if email != expected:
-                raise SwitchError(f'The {label} Claude folder is logged in as {email}, not {expected}; sign it in again with "setup.cmd claude {key}".')
+                raise WrongAccount(f'The {label} Claude folder is logged in as {email}, not {expected}; sign it in again with "setup.cmd claude {key}".')
             return {'email': email, 'method': 'token'}
     raise SwitchError(f'The {label} Claude login could not be verified with Anthropic; recheck, and if this stays sign it in again with "setup.cmd claude {key}".')
 
@@ -904,9 +911,10 @@ class WindowsOps:
             wait_for(lambda: gateway_states(require_drain=True), 12, 'Gateway did not acknowledge the restart safety gate.')
             if any(d['active_agents'] for _, d in gateway_states(require_drain=True)):
                 raise SwitchError('Gateway work started during preflight. Nothing was switched; retry when idle.')
+        # Hermes's own idle proof, asked again of every Desktop backend just before the close. There is no
+        # admission hold: work that starts between this answer and the window closing is the accepted gap.
         for b in self.bs:
-            result = call(b, '/freeze', {})
-            if not result.get('ok'):
+            if call(b, '/local-state')['blockers']:
                 raise SwitchError('Desktop work started during preflight. Nothing was switched; retry when idle.')
         if {b['pid'] for b in backends(self.old_main)} != {b['pid'] for b in self.bs}:
             raise SwitchError('Desktop backend inventory changed during preflight; retry.')
@@ -923,7 +931,7 @@ class WindowsOps:
         self.gateway_homes = list(dict.fromkeys(Path(d.get('hermes_home') or home) for home, d in states))
         self.checkpoint('closing_desktop', desktop_pid=self.old_main.pid,
                         gateway_pids=[p.pid for p in old_gateway_processes])
-        # With RPC admission closed and work idle, close the exact Desktop main window gracefully.
+        # With the gateway draining and every backend idle, close the exact Desktop main window gracefully.
         import ctypes
         from ctypes import wintypes
         user32 = ctypes.windll.user32
@@ -1027,12 +1035,10 @@ class WindowsOps:
                     # A profile with no Codex logins (e.g. an xAI-only voice profile) has nothing to select.
                     if state.get('uses_codex', True) and state['selected'] != codex_target:
                         return False
-                    if any(row['selected'] != codex_target for row in state['live_pools']):
-                        return False
                 if claude_target and not _same_dir(state.get('claude_config_dir') or '', claude_target):
                     return False
                 evidence.append({'profile': b['profile'], 'pid': b['pid'], 'selected': state['selected'],
-                                 'live_pools': state['live_pools'], 'claude_config_dir': state.get('claude_config_dir')})
+                                 'claude_config_dir': state.get('claude_config_dir')})
             return evidence
         evidence = wait_for(verified_backends, 75, 'Not every reopened Desktop backend verified the selected account.')
         result = {'new_desktop_pid': new_main.pid, 'new_gateway_pid': service()['pid'], 'profiles': evidence}
@@ -1088,8 +1094,3 @@ class WindowsOps:
 
     def unfreeze(self):
         self.clear_drains()
-        for b in self.bs:
-            try:
-                call(b, '/release', {})
-            except SwitchError:
-                pass

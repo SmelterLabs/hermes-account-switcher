@@ -23,8 +23,7 @@ CLAUDE_ROWS = [{'key': 'anthropic', 'label': 'Anthropic', 'email': 'first@exampl
 def client(monkeypatch, tmp_path):
     monkeypatch.setattr(api.ops, 'bound_settings', nullcontext)
     monkeypatch.setattr(api, 'settings_digest', lambda: 'fixture-digest')
-    monkeypatch.setattr(api, 'gate', SimpleNamespace(lock=threading.RLock(), busy=lambda: [], dispatch=lambda request: None,
-                                                      freeze=lambda: {'ok': True}, release=lambda: None))
+    monkeypatch.setattr(api, 'desktop_idle_blockers', lambda: [])
     monkeypatch.setattr(api, 'authorize', lambda request: None)
     monkeypatch.setattr(api.ops, 'accounts', lambda: identify(entries()))
     # Status reads every profile's store; the fixture has root only, resolved at call time
@@ -68,36 +67,70 @@ def test_missing_setup_returns_guidance_without_reading_auth(client, monkeypatch
     assert 'settings are missing' in response.json()['detail']
 
 
-def test_local_state_identifies_a_live_duplicate_grant(client, monkeypatch):
-    import threading
-    from types import SimpleNamespace
+@pytest.fixture
+def codex_pool(monkeypatch):
     auth = ModuleType('hermes_cli.auth')
     monkeypatch.setitem(sys.modules, 'hermes_cli', ModuleType('hermes_cli'))
     monkeypatch.setitem(sys.modules, 'hermes_cli.auth', auth)
-    rows = entries()
-    rows.append(dict(rows[0], id='third', priority=2))
+    monkeypatch.setattr(auth, 'read_credential_pool', lambda provider: entries(), raising=False)
 
-    class Pool:
-        provider = 'openai-codex'
 
-        def entries(self):
-            return [SimpleNamespace(to_dict=lambda row=row: row) for row in rows]
+def idle_proof_module(monkeypatch, answer):
+    """A stand-in for Hermes's own idle proof: a dict, or an exception to raise."""
+    module = ModuleType('hermes_cli.web_server_idle_proof')
+    def idle_proof():
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+    module.idle_proof = idle_proof
+    monkeypatch.setitem(sys.modules, 'hermes_cli.web_server_idle_proof', module)
+    return module
 
-        def peek(self):
-            return SimpleNamespace(id='third')
 
-    server = SimpleNamespace(_sessions_lock=threading.RLock(),
-                             _sessions={'run': {'agent': SimpleNamespace(_credential_pool=Pool())}},
-                             handle_request=api.gate.dispatch)
-    gateway = ModuleType('tui_gateway')
-    gateway.server = server
-    monkeypatch.setitem(sys.modules, 'tui_gateway', gateway)
-    monkeypatch.setitem(sys.modules, 'tui_gateway.server', server)
-    monkeypatch.setattr(auth, 'read_credential_pool', lambda provider: rows, raising=False)
+def test_local_state_reads_the_selection_and_names_the_idle_check(client, codex_pool, monkeypatch):
+    monkeypatch.setattr(api, 'desktop_idle_blockers', api._compat.desktop_idle_blockers)
+    idle_proof_module(monkeypatch, {'idle': True, 'reason': None})
     state = client.get('/local-state')
     assert state.status_code == 200
-    assert state.json()['selected'] == 'personal'
-    assert state.json()['live_pools'] == [{'selected': 'personal'}]
+    assert state.json()['selected'] == 'personal' and state.json()['uses_codex'] is True
+    assert state.json()['blockers'] == []
+    assert state.json()['activity_check'] == 'hermes_cli.web_server_idle_proof.idle_proof'
+    assert 'live_pools' not in state.json() and 'guard_installed' not in state.json()
+
+
+@pytest.mark.parametrize('proof,expected', [
+    ({'idle': False, 'reason': 'turn_in_flight', 'detail': 'session:abc,def'},
+     'A conversation is running, initializing, or waiting for input.'),
+    ({'idle': False, 'reason': 'awaiting_human_input'}, 'A conversation is waiting for input.'),
+    ({'idle': False, 'reason': 'turn_in_flight', 'detail': 'delegation'}, 'A conversation owns running background work.'),
+    ({'idle': False, 'reason': 'turn_in_flight', 'detail': 'cron:daily'}, 'A scheduled job is running.'),
+    ({'idle': False, 'reason': 'turn_in_flight', 'detail': 'retirement_admission'},
+     'Hermes Desktop is already closing this backend.'),
+    ({'idle': False, 'reason': 'turn_in_flight', 'detail': None}, 'Desktop is busy.'),
+    ({'idle': None, 'reason': 'turn_probe_unavailable'}, 'Hermes could not tell whether Desktop is idle; retry in a moment.'),
+])
+def test_a_busy_or_unknown_desktop_is_a_blocker_in_plain_words(client, codex_pool, monkeypatch, proof, expected):
+    """The refusal rests on Hermes's own idle proof: the session table, delegations, cron and prompts
+    waiting on a person. Anything Hermes cannot read is a blocker, never idle."""
+    monkeypatch.setattr(api, 'desktop_idle_blockers', api._compat.desktop_idle_blockers)
+    idle_proof_module(monkeypatch, proof)
+    state = client.get('/local-state').json()
+    assert state['blockers'] == [expected]
+    assert state['activity_check'] == 'hermes_cli.web_server_idle_proof.idle_proof'
+    assert 'abc' not in json.dumps(state)  # session ids stay inside Hermes
+
+
+def test_a_missing_idle_check_blocks_and_says_the_check_is_gone(client, codex_pool, monkeypatch):
+    monkeypatch.setattr(api, 'desktop_idle_blockers', api._compat.desktop_idle_blockers)
+    monkeypatch.setitem(sys.modules, 'hermes_cli.web_server_idle_proof', None)  # import fails
+    state = client.get('/local-state').json()
+    assert state['blockers'] == ["Hermes's idle check is unavailable; account switching is disabled."]
+    assert state['activity_check'] is None
+
+
+def test_the_plugin_has_no_admission_hold_routes(client):
+    for route in ('/freeze', '/release'):
+        assert client.post(route, json={}).status_code == 404
 
 
 def test_preflight_carries_blockers_and_selection(client):
@@ -159,3 +192,25 @@ def test_dead_operation_is_recovered_before_status(client, monkeypatch):
     assert data['blockers'] == [] and data['in_progress'] is False
     assert data['last_operation']['state'] == 'failed'
     assert not api.ops.LOCK.exists()
+
+
+def test_hermes_loads_the_api_without_putting_generic_modules_in_its_server(tmp_path):
+    """Hermes's web server imports plugin_api.py by file path, in its own long-lived process. The siblings
+    must not land there as top-level `settings`, `compat`, ... modules, nor dashboard/ on its sys.path."""
+    import subprocess
+    probe = """
+import importlib.util, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('hermes_dashboard_plugin_codex-account-switch', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+assert module.router.routes
+generic = {'settings', 'compat', 'switch_core', 'windows_ops', 'first_run', 'desktop_gate', 'worker_launch'}
+print(sorted(generic & set(sys.modules)), str(Path(sys.argv[1]).parent) in sys.path)
+"""
+    api_file = Path(__file__).parents[1] / 'dashboard' / 'plugin_api.py'
+    result = subprocess.run([sys.executable, '-c', probe, str(api_file)], cwd=tmp_path, capture_output=True,
+                            text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == ['[]', 'False']

@@ -15,12 +15,12 @@ complete_approved_switch.py reload_backend.py verify_switch_result.py
 README.md USER-GUIDE.md TECHNICAL-GUIDE.md settings.example.json
 package.json package-lock.json requirements-test.in requirements-test.lock
 dashboard/manifest.json dashboard/compat.py dashboard/settings.py
-dashboard/desktop_gate.py dashboard/env_set.py dashboard/first_run.py dashboard/plugin_api.py
+dashboard/env_set.py dashboard/first_run.py dashboard/plugin_api.py
 dashboard/switch_core.py dashboard/switch_worker.py dashboard/windows_ops.py dashboard/worker_launch.py
 desktop/plugin.js desktop/plugin.test.mjs desktop/fixtures.mjs desktop/sdk-stub.mjs
 desktop/test-setup.mjs desktop/vitest.config.mjs
 tests/conftest.py tests/test_api.py tests/test_approved_switch.py
-tests/test_backend_discovery.py tests/test_claude.py tests/test_compat.py tests/test_gate.py
+tests/test_backend_discovery.py tests/test_claude.py tests/test_compat.py
 tests/test_per_profile.py tests/test_process_liveness.py tests/test_recovery.py
 tests/test_reload.py tests/test_settings.py tests/test_switch.py tests/test_worker.py
 tests/test_install.py tests/test_release.py tests/test_stock_runtime.py tests/test_stock_gateway.py

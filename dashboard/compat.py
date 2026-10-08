@@ -1,4 +1,8 @@
-"""Private Hermes integration boundary. Every unavailable safety seam blocks switching."""
+"""Hermes integration boundary: the public Hermes names this plugin calls, and nothing else.
+
+Nothing here replaces, wraps or rebinds anything in Hermes, and no underscore-private name is
+read. Every unavailable interface refuses switching before any process or credential changes.
+"""
 from importlib import import_module
 from inspect import signature
 
@@ -15,41 +19,21 @@ INTERFACES = {
         'read_drain_request': ('home',),
         'clear_drain_request': ('home',),
     },
-    'tui_gateway.session_lifecycle': {'_session_has_active_delegations': ('sid', 'session')},
-    'hermes_cli.web_server': {'_require_token': ('request',)},
+    # Hermes's own answer to "may this Desktop backend stop now": sessions running, starting or
+    # queued, background delegations, scheduled jobs mid-run, and prompts waiting on a person.
+    'hermes_cli.web_server_idle_proof': {'idle_proof': ()},
     'hermes_cli.auth': {'read_credential_pool': ('provider_id',)},
     'hermes_cli.config': {'save_env_value': ('key', 'value'), 'remove_env_value': ('key',)},
 }
 
-
-def _referenced_names(code):
-    names = set(code.co_names)
-    for const in code.co_consts:
-        if hasattr(const, 'co_names'):
-            names |= _referenced_names(const)
-    return names
-
-
-def gate_target(server):
-    """The one function every Desktop request passes through, inline or on a worker thread."""
-    return '_handle_admitted_request' if callable(getattr(server, '_handle_admitted_request', None)) else 'handle_request'
-
-
-def require_gated_admission(server):
-    """Refuse a dispatcher that can start work through a function the freeze does not wrap."""
-    target = gate_target(server)
-    routes = {name for name in _referenced_names(server.dispatch.__code__) if 'handle' in name and 'request' in name}
-    if not routes or not routes <= {'handle_request', target}:
-        raise ValueError()
-    if target != 'handle_request' and target not in _referenced_names(server.handle_request.__code__):
-        raise ValueError()
+IDLE_UNAVAILABLE = "Hermes's idle check is unavailable; account switching is disabled."
 
 
 def require_switch_interfaces():
-    """Check known private signatures before a service stop or credential write.
+    """Check the public signatures before a service stop or credential write.
 
-    This is only the import contract. The gateway drain acknowledgement and fresh
-    activity count are proved by WindowsOps.freeze before any consumer stops.
+    This is only the import contract. The gateway drain acknowledgement and a fresh idle
+    answer from every Desktop backend are proved by WindowsOps.freeze before any consumer stops.
     """
     try:
         for module_name, names in INTERFACES.items():
@@ -59,14 +43,6 @@ def require_switch_interfaces():
                 parameters = signature(function).parameters
                 if not callable(function) or any(key not in parameters for key in required):
                     raise ValueError()
-        server = import_module('tui_gateway.server')
-        for name in ('handle_request', '_err', '_session_pending_kind'):
-            if not callable(getattr(server, name)):
-                raise ValueError()
-        getattr(server, '_sessions_lock')
-        if not isinstance(getattr(server, '_sessions'), dict):
-            raise ValueError()
-        require_gated_admission(server)
     except Exception:
         raise UnsupportedRuntime('Hermes safety interfaces are unavailable or changed; account switching is disabled.') from None
 
@@ -105,16 +81,33 @@ def drain_control():
     return import_module('gateway.drain_control')
 
 
-def server():
-    return import_module('tui_gateway.server')
+def desktop_idle_blockers():
+    """Why this Desktop backend may not be closed right now, in plain words; empty when it is idle.
 
-
-def has_active_delegations(sid, session):
-    return import_module('tui_gateway.session_lifecycle')._session_has_active_delegations(sid, session)
-
-
-def require_token(request):
-    return import_module('hermes_cli.web_server')._require_token(request)
+    The answer is Hermes's own ``idle_proof`` for this process, the probe Hermes Desktop uses before
+    it retires a backend. An unreadable answer is a blocker, never idle.
+    """
+    try:
+        proof = import_module('hermes_cli.web_server_idle_proof').idle_proof()
+        idle, reason, detail = proof.get('idle'), proof.get('reason'), proof.get('detail')
+    except Exception:
+        return [IDLE_UNAVAILABLE]
+    if idle is True:
+        return []
+    if idle is None:
+        return ['Hermes could not tell whether Desktop is idle; retry in a moment.']
+    if reason == 'awaiting_human_input':
+        return ['A conversation is waiting for input.']
+    detail = str(detail or '')
+    if detail.startswith('session:'):
+        return ['A conversation is running, initializing, or waiting for input.']
+    if detail == 'delegation':
+        return ['A conversation owns running background work.']
+    if detail.startswith('cron:'):
+        return ['A scheduled job is running.']
+    if detail == 'retirement_admission':
+        return ['Hermes Desktop is already closing this backend.']
+    return ['Desktop is busy.']
 
 
 def read_codex_pool():

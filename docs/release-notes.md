@@ -1,5 +1,45 @@
 # Release notes — Hermes Account Switcher
 
+## 1.2.2
+
+Answers the Hermes plugin catalog review of 2026-10-01 (NousResearch/hermes-agent pull request
+129693, reviewer teknium1). Nothing about how a switch is applied changed.
+
+- **The plugin touches Hermes only through public surfaces.** The Hermes catalog lists no plugin
+  that replaces, wraps or rebinds Hermes code. The plugin used to swap in its own dispatcher for
+  Hermes Desktop's requests so that, once a switch was cleared, new requests were held back for up
+  to three minutes while Desktop closed; it also read private names of the Desktop server. All of
+  that is gone, with the `/freeze` and `/release` routes and the `guard_installed` field. The
+  refusal stays: "is this Desktop backend idle" is now Hermes's own answer
+  (`hermes_cli.web_server_idle_proof.idle_proof`, the probe Hermes Desktop uses before it retires
+  a backend), asked once for the dialog and once more right before the window closes. It covers
+  conversations running, starting or waiting for input, background work a conversation owns, and
+  scheduled jobs mid-run; an answer Hermes cannot give is a refusal. **What is lost:** the hold. A
+  conversation started in the seconds between the last idle answer and the window closing is
+  closed with the window. The user guide says so.
+- **Dashboard modules no longer land on the shared web server's `sys.path`.** Hermes loads the
+  backend by file path into its long-lived web-server process; the siblings are now imported as
+  submodules of a package named after this plugin instead of as top-level `settings`, `compat`,
+  … modules that could shadow Hermes or another plugin. The helper scripts and the test suite are
+  unchanged. Contributed by teknium1 (SmelterLabs/hermes-account-switcher pull request 1).
+- **The one automatic token action is documented.** Before using a Claude login whose token has
+  expired, the plugin runs the `claude` CLI once against a closed local port so the CLI renews its
+  own token; that renewal goes to Anthropic and rotates the refresh token in that account's
+  `claude-auth` folder. The README said "no automatic rotation of any kind"; it, the catalog
+  description and this file now say what happens. The renewal itself is kept: without it every
+  switch to a Claude login that had gone unused long enough to expire would be refused.
+- **A Claude sign-in made as the wrong account is deleted, as the documents said.** The code kept
+  the mismatched `.credentials.json` in the folder and only refused to use it. It is now removed
+  from that folder (nothing else in the folder is touched) and the message says to sign in again
+  in a private browser window. A login that merely could not be verified, for example during a
+  network blip, stays.
+- **The plugin no longer reads which login a running conversation holds** (`live_pools` in
+  `/local-state`): that read went through private Desktop server state, and after a restart there
+  are no running conversations to read. The saved stores and each reopened backend's own selection
+  are still verified.
+- Hermes authenticates every plugin route itself; the plugin's own check is now only "the caller
+  is on this PC".
+
 ## 1.2.1
 
 - **The button works out which machine it is talking to.** Hermes Desktop sends a plugin's

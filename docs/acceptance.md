@@ -4,14 +4,15 @@ What "accepted" means for this plugin, split into five kinds of evidence. Passin
 substitutes for another. Nothing below is marked passed unless it ran, and every live result
 names its receipt.
 
-Release: **1.2.0**. Last updated 2026-09-29.
+Release: **1.2.2**. Last updated 2026-10-07.
 
-1.2.0 is the last release candidate, rc.4, with the version number and the wording of the
-documents changed and two fixes: a gateway run by a Windows service is found by setup and is
-never skipped by a switch, setup asks for a short name for each account, and the dialog does
-the setup itself the first time the button is clicked. Every live result below ran on rc.4 unless it says otherwise.
-The gates and the live runs on the 1.2.0 archive itself are recorded with the release,
-outside the archive: an archive cannot contain its own hash.
+1.2.2 answers the catalog review (see [release-notes.md](release-notes.md)): the in-process hold
+on Hermes Desktop's requests is gone and the idle refusal rests on Hermes's own idle proof; the
+dashboard modules are imported as a package; the Claude CLI token renewal is documented; a
+wrong-account Claude sign-in is deleted. 1.2.1 changed only the Desktop button. The way a switch
+is applied is unchanged since 1.2.0 (rc.4), so the live results below stand for it; rows the
+1.2.2 change touches say so. The gates and the live run on the 1.2.2 archive itself are recorded
+with the release, outside the archive: an archive cannot contain its own hash.
 
 ## A. Automated tests
 
@@ -19,8 +20,9 @@ Run from this repository; no Hermes needed.
 
 | Item | Status |
 |---|---|
-| Backend suites (fixture logins, temporary homes, stand-in commands) | **288 passing** |
-| Interface suite (stand-in for Hermes's plugin kit, not the real app) | **31 passing** |
+| Backend suites (fixture logins, temporary homes, stand-in commands) | **280 passing** |
+| Interface suite (stand-in for Hermes's plugin kit, not the real app) | **34 passing** |
+| Real-host import check: `plugin_api.py` loaded the way Hermes's web server loads it, in Hermes's own Python with the live checkout importable | **Passed 2026-10-07** on the owner's PC (Hermes `90d5048f`): 6 routes mounted, no generic sibling name and no `dashboard/` entry in that interpreter, every required public interface present, Hermes's idle proof readable, no private Desktop server name referenced. |
 
 These prove the logic. They do not prove a switch on a real machine; section D does.
 
@@ -29,7 +31,7 @@ These prove the logic. They do not prove a switch on a real machine; section D d
 | Item | Status |
 |---|---|
 | `hermes plugins validate --json` on the extracted archive | **Passed on the rc.4 archive**, run by a stock Hermes (upstream `7154128f`) on the test machine: exit 0, `ok: true`, security scan safe, Desktop surface inside the plugin kit. One documented skipped probe: the plugin has no `__init__.py`, so Hermes skips its Python capability probe. |
-| Hermes's own installer route (`hermes plugins install`) from the exact archive, byte for byte | Passed on the rc.1 archive. **Not repeated on the rc.4 archive**; it needs the public repository. |
+| Hermes's own installer route (`hermes plugins install`) from the exact archive, byte for byte | **Passed on 1.2.0 from the public repository** (`hermes plugins install SmelterLabs/hermes-account-switcher`, tag `v1.2.0`, stock Hermes `3cf2eb1c`): 67 of 67 files identical to the release archive, validator ok, enabled. | `receipts/2026-09-30-hermes-plugins-install.json` |
 
 ## C. Installer lifecycle
 
@@ -59,7 +61,7 @@ Windows installer.
 | Which account pays for a request, before and after a switch, measured on the wire | **Passed** | `receipts/2026-09-28-vm-billing-proof.json` |
 | Refusal: a login for an account that is not in the settings | **Passed**, nothing changed | `receipts/2026-09-28-vm-refusals-and-failures.json` |
 | Refusal: the provider rejects the target login | **Passed**, nothing changed | same |
-| Refusal: a conversation is running (dialog, and a forced request) | **Passed**, nothing changed, the conversation kept running | same |
+| Refusal: a conversation is running (dialog, and a forced request) | **Passed on 1.2.0** with the former in-process hold, nothing changed, the conversation kept running. On 1.2.2 the refusal is Hermes's own idle proof: **automated tests** cover every answer it can give; the live row for 1.2.2 is recorded with the release. | same |
 | An expired login | **Refused while expired.** Hermes renewed the login by itself within seconds and the switch was then allowed. Not a standing refusal. | same |
 | The selected login is dead: warning, and the account that really pays | **Passed** | same |
 | Failure while Hermes is closed: settings changed | **Passed**: previous order restored, Hermes reopened | same |
@@ -88,9 +90,7 @@ Windows installer.
 
 ## What is still open
 
-1. Hermes's own installer route (`hermes plugins install`) from the public repository. Its
-   result is recorded with the release.
-2. The listing in the official catalog.
+1. The listing in the official catalog.
 
 ## Release claim rule
 

@@ -24,6 +24,6 @@ if request.get('codex'):assert o.selected(o.accounts())==request['codex']
 if request.get('claude'):assert o.claude_selection()['selected']==request['claude']
 for b in o.backends(o.desktop()):
     s=o.call(b,'/local-state')
-    if request.get('codex'):assert s['selected']==request['codex'] and all(p['selected']==request['codex'] for p in s['live_pools'])
+    if request.get('codex'):assert s['selected']==request['codex']
     if request.get('claude'):assert o._same_dir(s.get('claude_config_dir') or '',request['claude'])
 print(f"{describe(request)} completed and independently verified: Desktop and the Hermes gateway restarted, every store and live backend reads the selected account, no pending switch lock."+(' Warnings: '+'; '.join(result['warnings']) if result.get('warnings') else ''))

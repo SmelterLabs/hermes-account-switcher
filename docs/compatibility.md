@@ -1,7 +1,7 @@
 # Compatibility record — Hermes Account Switcher
 
 Which Hermes builds this plugin has actually run against, what it depends on, and how it fails
-when a build is not supported. Last refreshed 2026-09-29.
+when a build is not supported. Last refreshed 2026-10-07.
 
 ## Verified builds
 
@@ -21,18 +21,19 @@ Receipts are in [receipts/](receipts/). No other build is claimed.
   plugin finds Hermes's Python, its command and Hermes Desktop through that install's folders;
   where they are missing, the setup command says so and changes nothing.
 
-## Private Hermes interfaces this plugin uses
+## Hermes interfaces this plugin uses
 
-Everything below is a **private** Hermes interface, not part of a documented plugin kit. That is
-the plugin's core compatibility risk: Hermes is free to change any of it.
+Everything below is a public (non-underscore) Hermes name or command, called as is. Nothing is
+replaced, wrapped or rebound, and no private name is read: that is what the Hermes plugin catalog
+policy requires. Most of these names are still not part of the documented plugin kit, so Hermes is
+free to change them; the plugin checks each one before it acts and refuses when one is gone.
 
 | Interface | Used for |
 |---|---|
 | `pm.environments.committed_venv` | finding Hermes's current Python |
-| `gateway.drain_control` (`write_drain_request`, `read_drain_request`, `drain_requested`, `clear_drain_request`) | holding new gateway work back, reversibly |
-| `tui_gateway.server` (the session list, `dispatch`, `handle_request`, `_handle_admitted_request`) | holding new Desktop work back; reading which login a running conversation holds |
-| `tui_gateway.session_lifecycle._session_has_active_delegations` | the idle check |
-| `hermes_cli.web_server._require_token` | reusing Hermes's own loopback sign-in |
+| `gateway.drain_control` (`write_drain_request`, `read_drain_request`, `drain_requested`, `clear_drain_request`) | holding new gateway work back, reversibly (the gateway's own external drain-control contract) |
+| `hermes_cli.web_server_idle_proof.idle_proof` | whether a Desktop backend is idle: the probe Hermes Desktop itself uses before retiring a backend (sessions, delegations, scheduled jobs, prompts waiting on a person) |
+| Hermes's web-server authentication on every plugin route | the plugin's routes answer only to Hermes's own signed-in Desktop; the plugin adds a loopback check |
 | `hermes_cli.auth.read_credential_pool` | reading which logins exist |
 | `hermes_cli.config.save_env_value` / `remove_env_value` | writing one `.env` key per profile (Claude) |
 | Commands: `hermes auth priority`, `hermes auth reset`, `hermes gateway stop`, `hermes gateway start` | changing the login order; stopping and starting the gateway |
@@ -41,10 +42,14 @@ the plugin's core compatibility risk: Hermes is free to change any of it.
 ## How an unsupported build fails
 
 Before anything is stopped or written, the plugin checks that every interface above exists with
-the parameters it expects, and that every route by which Hermes Desktop can start work passes
-through the one function the plugin holds back. If any check fails, switching is refused with
-"Hermes safety interfaces are unavailable or changed; account switching is disabled." and nothing
-is changed. The plugin never patches Hermes.
+the parameters it expects. If any check fails, switching is refused with "Hermes safety interfaces
+are unavailable or changed; account switching is disabled." and nothing is changed. A Desktop
+backend whose idle proof cannot be read, or answers "unknown", is a blocker, never idle. The plugin
+never patches Hermes.
+
+Up to 1.2.1 the plugin also rebound Hermes Desktop's request dispatcher to hold new requests back
+during a switch. That is gone in 1.2.2 (catalog policy), so the seconds between the last idle
+answer and the Desktop window closing are not guarded.
 
 ## Behavior of stock Hermes worth knowing
 
