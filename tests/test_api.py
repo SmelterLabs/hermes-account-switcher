@@ -105,7 +105,7 @@ def test_local_state_reads_the_selection_and_names_the_idle_check(client, codex_
     ({'idle': False, 'reason': 'turn_in_flight', 'detail': 'delegation'}, 'A conversation owns running background work.'),
     ({'idle': False, 'reason': 'turn_in_flight', 'detail': 'cron:daily'}, 'A scheduled job is running.'),
     ({'idle': False, 'reason': 'turn_in_flight', 'detail': 'retirement_admission'},
-     'Hermes Desktop is already closing this backend.'),
+     'Hermes is handling a request; retry in a moment.'),
     ({'idle': False, 'reason': 'turn_in_flight', 'detail': None}, 'Desktop is busy.'),
     ({'idle': None, 'reason': 'turn_probe_unavailable'}, 'Hermes could not tell whether Desktop is idle; retry in a moment.'),
 ])
@@ -214,3 +214,13 @@ print(sorted(generic & set(sys.modules)), str(Path(sys.argv[1]).parent) in sys.p
                             text=True, timeout=60)
     assert result.returncode == 0, result.stderr
     assert result.stdout.split() == ['[]', 'False']
+
+def test_a_request_merely_in_flight_is_asked_again_before_it_blocks(client, codex_pool, monkeypatch):
+    """Hermes reports its admission ledger while one admitted request is in flight; that clears by itself."""
+    monkeypatch.setattr(api, 'desktop_idle_blockers', api._compat.desktop_idle_blockers)
+    monkeypatch.setattr(api._compat, 'sleep', lambda seconds: None)
+    answers = iter([{'idle': False, 'reason': 'turn_in_flight', 'detail': 'retirement_admission'},
+                    {'idle': True, 'reason': None}])
+    module = idle_proof_module(monkeypatch, None)
+    module.idle_proof = lambda: next(answers)
+    assert client.get('/local-state').json()['blockers'] == []

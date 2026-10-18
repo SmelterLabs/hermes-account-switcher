@@ -6,7 +6,7 @@ not been proven is in [docs/acceptance.md](docs/acceptance.md).
 
 ## What this is
 
-A Windows-only Hermes Desktop plugin (ID `codex-account-switch`, version 1.2.2)
+A Windows-only Hermes Desktop plugin (ID `codex-account-switch`, version 1.2.3)
 that switches which Codex login and which Claude subscription account every local Hermes profile
 on the PC uses, through one idle-only, verified restart. It began as a private tool tailored to
 one machine and is packaged here for anyone. **The working behavior was preserved, not
@@ -17,6 +17,8 @@ Three things are deliberately not part of this project: the third-party
 change to Hermes itself; and any credential management beyond selection.
 
 ## Layout
+
+The sanitized public release checkout is a separate Git repository under `publishing/public/`, excluded from the private working tree through `.git/info/exclude`. The private and public histories remain separate; never push private development history as a release. This nested checkout replaces the former sibling folder, without changing release commits or the installed plugin.
 
 | Path | Role |
 |---|---|
@@ -57,6 +59,14 @@ The release is a "unified package": backend code under
    the user's environment and not the worker's.
 6. **Verify**: new process ids, every reopened backend's own state, every stored order, Claude
    identity again. Only then does the receipt say `state: complete`.
+
+**Unified gateway runtime (Hermes v0.22 on, `compat.gateway_hosts_desktop()`):** Hermes Desktop
+starts no backend; it attaches to the gateway, which serves this plugin and runs every turn. Steps 2,
+3, 5 and 6 then touch only the gateway: the idle proof is the gateway's own (in-process), the drain
+acknowledgement holds every turn, Desktop is never closed or reopened (it reattaches by itself), and
+verification is a new gateway identity plus the stored selections. Preflight and receipt carry
+`desktop_restarts: false`. Proven on the owner PC 2026-10-17 (operation `64bc43ff…`, Claude →
+gmail, gateway 20552 → 45320 under `HermesGateway`, Desktop PID unchanged).
 
 Invariants:
 
@@ -170,6 +180,16 @@ checked against the login, never inferred from a label**.
   `codex.warnings`.
 - **The stage in a failure message is the stage that failed.** Recovery moves the receipt's stage
   on when it reopens Hermes; `failed_during` keeps the original.
+- **The local diagnostic worker preserves safe failure details.** `failure_details` records the
+  exception type, the last eight basename/function/line frames, and integer `errno`/`winerror`
+  values. It excludes exception text, full paths, source lines, locals and credential values.
+  Added after 1.2.2 and published in 1.2.3; the dialog's existing message is unchanged.
+- **Receipt replacement tolerates brief Windows reader locks.** A status reader can prevent
+  `Path.replace` with WinError 5, 32 or 33. The writer retries only replacement for at most one
+  second, preserves the previous receipt meanwhile, and propagates persistent or other errors.
+- **Backend verification retains its last check.** Failure receipts include the discovery/HTTP/
+  account-check phase and safe details, so the 75-second deadline does not erase the underlying
+  reason. The idle, process-identity and account checks are unchanged.
 - **The active-work blocker has no job names**, on purpose: the lookup that provided them was
   outside the plugin kit.
 - **After any Hermes update:** acceptance is the real dialog showing selectors, and a real switch.
@@ -186,7 +206,8 @@ npm ci                             # interface test dependencies
 npm test                           # interface suite
 ```
 
-Current counts: 280 backend, 34 interface. Live evidence and what is still not run:
+Current counts: 297 backend, 34 interface. The 1.2.3 runtime support was proven on the owner's
+PC with one real switch: `docs/receipts/2026-10-17-unified-runtime-owner-pc.json`. Live evidence and what is still not run:
 [docs/acceptance.md](docs/acceptance.md).
 
 The real-host import check loads `dashboard/plugin_api.py` the way Hermes's web server does

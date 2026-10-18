@@ -10,6 +10,23 @@ import windows_ops as ops
 import psutil
 
 
+def failure_details(exc):
+    """Record location and OS codes, never exception text, source lines, locals, or credentials."""
+    from pathlib import Path
+    frames = []
+    cursor = exc.__traceback__
+    while cursor is not None:
+        frames.append({"file": Path(cursor.tb_frame.f_code.co_filename).name,
+                       "function": cursor.tb_frame.f_code.co_name, "line": cursor.tb_lineno})
+        cursor = cursor.tb_next
+    details = {"type": type(exc).__name__, "frames": frames[-8:]}
+    for name in ("errno", "winerror"):
+        value = getattr(exc, name, None)
+        if isinstance(value, int):
+            details[name] = value
+    return details
+
+
 def main(operation_id):
     with ops.bound_settings():
         _main_bound(operation_id)
@@ -29,8 +46,9 @@ def _main_bound(operation_id):
     handed_off = False
     try:
         time.sleep(3)  # Let the confirmed UI response render before any shutdown.
-        main_pid = desktop().pid
-        if main_pid in {p.pid for p in psutil.Process().parents()}:
+        # On the unified gateway runtime the gateway, not Desktop, started this worker and Desktop stays open.
+        main_pid = None if ops.gateway_hosts_desktop() else desktop().pid
+        if main_pid is not None and main_pid in {p.pid for p in psutil.Process().parents()}:
             # Also repair callers whose plugin API is still loaded from before
             # this update; they read this worker from disk on each invocation.
             from pathlib import Path
@@ -38,7 +56,7 @@ def _main_bound(operation_id):
             launch(sys.executable, Path(__file__).resolve(), operation_id, ops.ROOT)
             handed_off = True
             return
-        wait_for(lambda: main_pid not in {p.pid for p in psutil.Process().parents()},
+        wait_for(lambda: main_pid is None or main_pid not in {p.pid for p in psutil.Process().parents()},
                  10, 'Worker is still attached to Desktop; no restart or switch was attempted.')
         evidence = switch_transaction(WindowsOps(record), record['target'])
         record.update(evidence)
@@ -48,6 +66,7 @@ def _main_bound(operation_id):
         # left at "accepted" reads as pending forever. Only this plugin's own plain-language errors are shown;
         # anything else records its type, never its text, except Hermes's own exit reason, which is an
         # operational message.
+        record["failure_details"] = failure_details(exc)
         stage = record.get('failed_during') or record['state']
         if isinstance(exc, ops.LocalOperationFailed):
             message = f'A required local Hermes operation failed during {stage}.'

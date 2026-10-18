@@ -1,5 +1,25 @@
 # Release notes — Hermes Account Switcher
 
+## 1.2.3
+
+Supports Hermes 0.22, whose unified gateway runtime runs every chat in the gateway: Hermes Desktop
+no longer starts a backend of its own. On that runtime 1.2.2 refused every switch with "No live
+Desktop backends were found."
+
+- **On Hermes 0.22 and later a switch restarts only the gateway.** The plugin detects the runtime
+  (`hermes_cli.gateway_runtime` present), takes Hermes's own idle proof inside the gateway that
+  serves the dialog, holds every turn with the gateway's drain acknowledgement, stops and starts the
+  gateway, and verifies a new gateway process and every stored selection. Hermes Desktop stays open
+  and reconnects by itself. Preflight answers and receipts carry `desktop_restarts: false`; the
+  dialog says Desktop reconnects instead of reopening. Earlier Hermes keeps the 1.2.2 behaviour.
+- **A request merely in flight no longer reads as "already closing".** Hermes reports its admission
+  ledger while one admitted request is still being answered (seen in the first seconds after
+  Desktop opens). The plugin asks again for about two seconds and only then refuses, with "Hermes
+  is handling a request; retry in a moment."
+- **Windows receipt contention.** A status poll that briefly holds the receipt file no longer fails
+  a switch at its last write: the replacement is retried for up to a second. Failed switches keep
+  safe diagnostics (stage, file and line, OS codes; never text or secrets).
+
 ## 1.2.2
 
 Answers the Hermes plugin catalog review of 2026-10-01 (NousResearch/hermes-agent pull request

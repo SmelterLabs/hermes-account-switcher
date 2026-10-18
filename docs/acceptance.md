@@ -4,7 +4,11 @@ What "accepted" means for this plugin, split into five kinds of evidence. Passin
 substitutes for another. Nothing below is marked passed unless it ran, and every live result
 names its receipt.
 
-Release: **1.2.2**. Last updated 2026-10-07.
+Release: **1.2.3**. Last updated 2026-10-17.
+
+1.2.3 adds support for Hermes 0.22 (the gateway restarts alone; Hermes Desktop stays open). Proven
+on the owner's PC with one real switch before release: `receipts/2026-10-17-unified-runtime-owner-pc.json`.
+The live run on the 1.2.3 archive itself is recorded with the release.
 
 1.2.2 answers the catalog review (see [release-notes.md](release-notes.md)): the in-process hold
 on Hermes Desktop's requests is gone and the idle refusal rests on Hermes's own idle proof; the
@@ -31,7 +35,8 @@ These prove the logic. They do not prove a switch on a real machine; section D d
 | Item | Status |
 |---|---|
 | `hermes plugins validate --json` on the extracted archive | **Passed on the rc.4 archive**, run by a stock Hermes (upstream `7154128f`) on the test machine: exit 0, `ok: true`, security scan safe, Desktop surface inside the plugin kit. One documented skipped probe: the plugin has no `__init__.py`, so Hermes skips its Python capability probe. |
-| Hermes's own installer route (`hermes plugins install`) from the exact archive, byte for byte | **Passed on 1.2.0 from the public repository** (`hermes plugins install SmelterLabs/hermes-account-switcher`, tag `v1.2.0`, stock Hermes `3cf2eb1c`): 67 of 67 files identical to the release archive, validator ok, enabled. | `receipts/2026-09-30-hermes-plugins-install.json` |
+| Hermes's own installer route (`hermes plugins install`) from the exact archive, byte for byte | **Passed on 1.2.0 from the public repository** (`hermes plugins install SmelterLabs/hermes-account-switcher`, tag `v1.2.0`, stock Hermes `3cf2eb1c`): 67 of 67 files identical to the release archive, validator ok, enabled. Not repeated for 1.2.2 (the test machine is gone); the public tree is byte for byte the 1.2.2 archive. | `receipts/2026-09-30-hermes-plugins-install.json` |
+| The 1.2.2 archive installed with the plugin's own installer on the owner's PC, then one real switch | **Passed 2026-10-08** (Hermes `8447d38e`): 15 files, a Claude reapply verified in 73 s, new Desktop and gateway processes, the reopened backend answering with Hermes's idle proof. | `receipts/2026-10-08-install-1.2.2-owner-pc.json` |
 
 ## C. Installer lifecycle
 
@@ -61,7 +66,7 @@ Windows installer.
 | Which account pays for a request, before and after a switch, measured on the wire | **Passed** | `receipts/2026-09-28-vm-billing-proof.json` |
 | Refusal: a login for an account that is not in the settings | **Passed**, nothing changed | `receipts/2026-09-28-vm-refusals-and-failures.json` |
 | Refusal: the provider rejects the target login | **Passed**, nothing changed | same |
-| Refusal: a conversation is running (dialog, and a forced request) | **Passed on 1.2.0** with the former in-process hold, nothing changed, the conversation kept running. On 1.2.2 the refusal is Hermes's own idle proof: **automated tests** cover every answer it can give; the live row for 1.2.2 is recorded with the release. | same |
+| Refusal: a conversation is running (dialog, and a forced request) | **Passed on 1.2.0** with the former in-process hold, nothing changed, the conversation kept running. On 1.2.2 the refusal is Hermes's own idle proof: **automated tests** cover every answer it can give. **Seen live on 1.2.2** (owner's PC): the idle proof read "busy" in the first seconds after Desktop reopened and "idle" in 50 of 50 samples afterwards; a forced refusal with a running conversation was **not run** on 1.2.2. | same, and `receipts/2026-10-08-install-1.2.2-owner-pc.json` |
 | An expired login | **Refused while expired.** Hermes renewed the login by itself within seconds and the switch was then allowed. Not a standing refusal. | same |
 | The selected login is dead: warning, and the account that really pays | **Passed** | same |
 | Failure while Hermes is closed: settings changed | **Passed**: previous order restored, Hermes reopened | same |
@@ -78,7 +83,7 @@ Windows installer.
 | A first-time install on a blank Windows 11, with no Python on it: Hermes's official installer, `setup.cmd`, `hermes plugins enable`, the switch on the plugin's card, then a switch through the dialog | **Passed** (first switch 54.6 s, billing confirmed on the wire) | `receipts/2026-09-29-vm-first-install.json` |
 | Hermes installed with the official Windows installer (`Hermes-Setup.exe`) | **Passed.** It builds the same install as the install script. | same |
 | Hermes as a Windows Store style package, which Hermes's source can build but its site does not offer | **Not run.** | |
-| The author's own customized Hermes build with a Windows service gateway | **Not run for this release.** The internal tool this plugin was packaged from runs there daily. | |
+| The author's own customized Hermes build with a Windows service gateway | **Passed on 1.2.2** (2026-10-08, Hermes `8447d38e` with the owner's overlay, gateway as the service `HermesGateway`): install, Desktop relaunch, one real switch verified. | `receipts/2026-10-08-install-1.2.2-owner-pc.json` |
 
 ## E. Hermes update
 

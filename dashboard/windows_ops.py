@@ -15,13 +15,15 @@ if __package__:  # imported by the dashboard API inside Hermes's web server
     from .switch_core import (CLAUDE, EMAILS, PROVIDERS, SwitchError, WrongAccount, effective, health_warning, identify,
                               lapsed_note, selected, summaries)
     from .settings import SettingsError, load_settings, settings_snapshot, ensure_settings_unchanged
-    from .compat import UnsupportedRuntime, require_switch_interfaces, committed_venv, drain_control, safe_yaml_load
+    from .compat import (UnsupportedRuntime, require_switch_interfaces, committed_venv, drain_control, safe_yaml_load,
+                         gateway_hosts_desktop)
     from .worker_launch import clean_env
 else:  # the helper scripts and the test suite, with dashboard/ on their own sys.path
     from switch_core import (CLAUDE, EMAILS, PROVIDERS, SwitchError, WrongAccount, effective, health_warning, identify, lapsed_note,
                              selected, summaries)
     from settings import SettingsError, load_settings, settings_snapshot, ensure_settings_unchanged
-    from compat import UnsupportedRuntime, require_switch_interfaces, committed_venv, drain_control, safe_yaml_load
+    from compat import (UnsupportedRuntime, require_switch_interfaces, committed_venv, drain_control, safe_yaml_load,
+                        gateway_hosts_desktop)
     from worker_launch import clean_env
 
 ROOT = Path(os.environ.get('HERMES_HOME') or Path(os.environ.get('LOCALAPPDATA', tempfile.gettempdir())) / 'hermes')
@@ -87,7 +89,17 @@ def atomic(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(path.name + f'.{os.getpid()}.tmp')
     temp.write_text(json.dumps(data, indent=2), encoding='utf-8')
-    temp.replace(path)
+    # Windows readers do not grant delete sharing. A concurrent status poll can
+    # briefly prevent replacement even though both files are writable. Keep the
+    # old receipt intact and retry only the replacement, with a one-second cap.
+    for attempt in range(21):
+        try:
+            temp.replace(path)
+            return
+        except PermissionError as exc:
+            if getattr(exc, 'winerror', None) not in (5, 32, 33) or attempt == 20:
+                raise
+            time.sleep(.05)
 
 
 def accounts():
@@ -579,8 +591,14 @@ def call(backend, route, body=None):
     try:
         with urllib.request.urlopen(req, timeout=8) as r:
             return json.load(r)
-    except Exception:
-        raise SwitchError(f"The account-switch plugin is not responding in {backend['profile']}.") from None
+    except Exception as exc:
+        failure = SwitchError(f"The account-switch plugin is not responding in {backend['profile']}.")
+        failure.transport_details = {'type': type(exc).__name__}
+        for name in ('code', 'errno', 'winerror'):
+            value = getattr(exc, name, None)
+            if isinstance(value, int):
+                failure.transport_details[name] = value
+        raise failure from None
 
 
 def stock_gateways():
@@ -767,14 +785,19 @@ def preflight(own_state=None):
                                   + gateway_setting_blockers()))
     if blockers:
         return {'ok': False, 'blockers': blockers, **summary}
-    main = desktop()
-    bs = backends(main)
-    gateway = gateway_in_use()
+    hosted = gateway_hosts_desktop()
+    gateway = hosted or gateway_in_use()
     if gateway and service()['status'] != 'running':
         blockers.append('The Hermes gateway is not running.')
-    for b in bs:
-        local = own_state() if own_state is not None and b['pid'] == os.getpid() else call(b, '/local-state')
-        blockers.extend(f"{b['profile']}: {x}" for x in local['blockers'])
+    if hosted:
+        # Desktop has no backend to ask: the gateway runs every turn and serves this route, so Hermes's
+        # idle proof is this process's own. The worker, a separate process, relies on the drain below.
+        if own_state is not None:
+            blockers.extend(own_state()['blockers'])
+    else:
+        for b in backends(desktop()):
+            local = own_state() if own_state is not None and b['pid'] == os.getpid() else call(b, '/local-state')
+            blockers.extend(f"{b['profile']}: {x}" for x in local['blockers'])
     for home, state in gateway_states() if gateway else []:
         if state['active_agents']:
             blockers.append(f'{home_name(home)}: gateway or scheduled work is active.')
@@ -782,7 +805,7 @@ def preflight(own_state=None):
             blockers.append('Another gateway maintenance operation is in progress.')
     if EMAILS and summary['codex']['selected'] is None:
         blockers.append('Hermes profiles disagree on which Codex account comes first.')
-    return {'ok': not blockers, 'blockers': blockers, **summary}
+    return {'ok': not blockers, 'blockers': blockers, 'desktop_restarts': not hosted, **summary}
 
 
 def wait_for(fn, timeout, message):
@@ -846,6 +869,8 @@ class WindowsOps:
         self.old_gateway = None
         self.gateway_homes = []
         self.gateway = True
+        # Unified gateway runtime: Desktop holds no account and stays open; it reattaches by itself.
+        self.hosted = False
 
     def stage(self, name):
         self.record['state'] = name
@@ -890,11 +915,14 @@ class WindowsOps:
             identity = claude_identity(request['claude'])
             self.record['claude_identity_before'] = identity['method']
             previous['claude'] = p['claude']['selected'] if p['claude']['state'] == 'set' else 'unset'
-        self.old_main = desktop()
-        self.bs = backends(self.old_main)
-        self.gateway = gateway_in_use()
+        self.hosted = gateway_hosts_desktop()
+        if not self.hosted:
+            self.old_main = desktop()
+            self.bs = backends(self.old_main)
+        self.gateway = self.hosted or gateway_in_use()
         self.old_gateway = gateway_identity(service()) if self.gateway else None
-        self.record.update(previous=previous, old_desktop_pid=self.old_main.pid,
+        self.record.update(previous=previous, desktop_restarts=not self.hosted,
+                           old_desktop_pid=self.old_main.pid if self.old_main else None,
                            old_gateway_pid=self.old_gateway[0] if self.gateway else None)
         return {'previous': previous}
 
@@ -913,6 +941,9 @@ class WindowsOps:
                 raise SwitchError('Gateway work started during preflight. Nothing was switched; retry when idle.')
         # Hermes's own idle proof, asked again of every Desktop backend just before the close. There is no
         # admission hold: work that starts between this answer and the window closing is the accepted gap.
+        # On the unified runtime there is no Desktop backend: the acknowledged drain above already holds every turn.
+        if self.hosted:
+            return
         for b in self.bs:
             if call(b, '/local-state')['blockers']:
                 raise SwitchError('Desktop work started during preflight. Nothing was switched; retry when idle.')
@@ -922,13 +953,22 @@ class WindowsOps:
     def stop(self):
         ensure_settings_unchanged()
         self.stage('restarting')
-        self_process = psutil.Process()
-        helper_pids = {self_process.pid} | {p.pid for p in self_process.parents() if p.pid != self.old_main.pid}
-        self.old_tree = [p for p in self.old_main.children(recursive=True) if p.pid not in helper_pids]
         states = gateway_states(require_drain=True) if self.gateway else []
         old_gateway_processes = [psutil.Process(d['pid']) for _, d in states]
         # One multiplexed gateway can publish its ledger into several homes; stop it through its owner.
         self.gateway_homes = list(dict.fromkeys(Path(d.get('hermes_home') or home) for home, d in states))
+        if not self.hosted:
+            self.close_desktop(old_gateway_processes)
+        self.stop_gateway()
+        wait_for(lambda: all(not process_alive(p) for p in old_gateway_processes), 20,
+                 'An old gateway process is still alive; credentials were not changed.')
+        self.checkpoint('gateway_stopped')
+        self.stopped = True
+
+    def close_desktop(self, old_gateway_processes):
+        self_process = psutil.Process()
+        helper_pids = {self_process.pid} | {p.pid for p in self_process.parents() if p.pid != self.old_main.pid}
+        self.old_tree = [p for p in self.old_main.children(recursive=True) if p.pid not in helper_pids]
         self.checkpoint('closing_desktop', desktop_pid=self.old_main.pid,
                         gateway_pids=[p.pid for p in old_gateway_processes])
         # With the gateway draining and every backend idle, close the exact Desktop main window gracefully.
@@ -954,11 +994,6 @@ class WindowsOps:
         wait_for(lambda: all(not process_alive(p) for p in self.old_tree), 25,
                  'A Desktop child is still running; no account change was made.')
         self.checkpoint('desktop_closed')
-        self.stop_gateway()
-        wait_for(lambda: all(not process_alive(p) for p in old_gateway_processes), 20,
-                 'An old gateway process is still alive; credentials were not changed.')
-        self.checkpoint('gateway_stopped')
-        self.stopped = True
 
     def stop_gateway(self):
         service_name = load_settings().gateway_service
@@ -1015,20 +1050,56 @@ class WindowsOps:
             self.start_gateway()
             wait_for(gateway_healthy, 55, 'The restarted Hermes gateway failed its health check.')
         self.stopped = False
-        launch_desktop()
+        if not self.hosted:
+            launch_desktop()
 
     def verify(self, request):
         self.stage('verifying')
+        codex_target = request.get('codex')
+        claude_target = request.get('claude')
+        if self.hosted:
+            # The gateway is the only account consumer; Desktop was never closed and reattaches by itself.
+            if gateway_identity(service()) == self.old_gateway:
+                raise SwitchError('A required process did not restart.')
+            result = {'new_desktop_pid': None, 'new_gateway_pid': service()['pid'],
+                      'profiles': [{'profile': 'gateway', 'pid': service()['pid']}]}
+            return self.verify_stores(request, result)
         new_main = wait_for(desktop, 45, 'Hermes Desktop did not reopen.')
         if new_main.pid == self.old_main.pid or (self.gateway and gateway_identity(service()) == self.old_gateway):
             raise SwitchError('A required process did not restart.')
-        codex_target = request.get('codex')
-        claude_target = request.get('claude')
         def verified_backends():
-            bs = backends(new_main)
+            self.record['verification_attempts'] = self.record.get('verification_attempts', 0) + 1
+            self.record['verification_desktop_pid'] = new_main.pid
+            try:
+                bs = backends(new_main)
+            except (SwitchError, psutil.Error, OSError) as exc:
+                import traceback
+                self.record['verification_last_check'] = {
+                    'phase': 'discovering_backends', 'type': type(exc).__name__,
+                    'message': str(exc) if isinstance(exc, SwitchError) else None,
+                    'errno': getattr(exc, 'errno', None), 'winerror': getattr(exc, 'winerror', None),
+                    'frames': [{'file': Path(f.filename).name, 'function': f.name, 'line': f.lineno}
+                               for f in traceback.extract_tb(exc.__traceback__)[-8:]],
+                }
+                raise
             evidence = []
             for b in bs:
-                state = call(b, '/local-state')
+                try:
+                    state = call(b, '/local-state')
+                except (SwitchError, psutil.Error, OSError) as exc:
+                    self.record['verification_last_check'] = {
+                        'phase': 'reading_backend', 'profile': b['profile'], 'pid': b['pid'],
+                        'type': type(exc).__name__,
+                        'transport': getattr(exc, 'transport_details', None),
+                    }
+                    raise
+                self.record['verification_last_check'] = {
+                    'phase': 'checking_account', 'profile': b['profile'], 'pid': b['pid'],
+                    'born': b['born'], 'started_at': self.record['started_at'],
+                    'uses_codex': state.get('uses_codex', True), 'selected': state.get('selected'),
+                    'codex_target': codex_target,
+                    'claude_matches': not claude_target or _same_dir(state.get('claude_config_dir') or '', claude_target),
+                }
                 if b['born'] <= self.record['started_at']:
                     return False
                 if codex_target:
@@ -1042,6 +1113,11 @@ class WindowsOps:
             return evidence
         evidence = wait_for(verified_backends, 75, 'Not every reopened Desktop backend verified the selected account.')
         result = {'new_desktop_pid': new_main.pid, 'new_gateway_pid': service()['pid'], 'profiles': evidence}
+        return self.verify_stores(request, result)
+
+    def verify_stores(self, request, result):
+        codex_target = request.get('codex')
+        claude_target = request.get('claude')
         if codex_target:
             # Cold profiles have no process; their saved stores must also try the target first.
             if common_selection(codex_stores()) != codex_target:

@@ -99,6 +99,87 @@ def test_a_failure_names_the_stage_it_happened_in_and_its_plain_reason(operation
     assert 'fixture-private-secret' not in receipt.read_text()
 
 
+def test_permission_failure_records_location_and_codes_without_private_text(operation, monkeypatch):
+    receipt, lock = operation
+    monkeypatch.setattr(worker.psutil, 'Process', lambda: SimpleNamespace(parents=lambda: []))
+
+    def fail(ops_object, target):
+        ops_object.record['state'] = 'restarting'
+        error = PermissionError(13, 'fixture-private-secret')
+        error.winerror = 32
+        raise error
+
+    monkeypatch.setattr(worker, 'switch_transaction', fail)
+    worker.main('test')
+    final = json.loads(receipt.read_text())
+    details = final['failure_details']
+    assert final['state'] == 'failed' and final['failed_during'] == 'restarting'
+    assert details['type'] == 'PermissionError'
+    assert details['errno'] == 13 and details['winerror'] == 32
+    assert details['frames'][-1]['file'] == 'test_worker.py'
+    assert details['frames'][-1]['function'] == 'fail'
+    assert all(set(frame) == {'file', 'function', 'line'} for frame in details['frames'])
+    assert 'fixture-private-secret' not in receipt.read_text()
+    assert not lock.exists()
+
+
+@pytest.mark.skipif(worker.os.name != 'nt', reason='Windows denies replacement while a reader holds the file')
+def test_receipt_write_survives_a_concurrent_windows_reader(tmp_path, monkeypatch):
+    from pathlib import Path
+    import threading
+    path = tmp_path / 'receipt.json'
+    path.write_text('{"state": "checking"}')
+    blocked = threading.Event()
+    original_replace = Path.replace
+    failures = []
+
+    def observed_replace(source, target):
+        try:
+            return original_replace(source, target)
+        except PermissionError:
+            blocked.set()
+            raise
+
+    monkeypatch.setattr(Path, 'replace', observed_replace)
+
+    def write():
+        try:
+            worker.ops.atomic(path, {'state': 'restarting'})
+        except Exception as exc:
+            failures.append(type(exc).__name__)
+
+    with path.open('rb') as reader:
+        thread = threading.Thread(target=write)
+        thread.start()
+        saw_contention = blocked.wait(2)
+        assert json.load(reader)['state'] == 'checking'
+    thread.join(3)
+    assert saw_contention and not thread.is_alive() and failures == []
+    assert json.loads(path.read_text()) == {'state': 'restarting'}
+
+
+@pytest.mark.parametrize('winerror, expected_attempts', [(5, 21), (32, 21), (33, 21), (123, 1), (None, 1)])
+def test_receipt_retry_is_bounded_and_does_not_mask_other_errors(tmp_path, monkeypatch, winerror, expected_attempts):
+    from pathlib import Path
+    attempts = []
+    path = tmp_path / 'receipt.json'
+    path.write_text('{"state": "checking"}')
+
+    def denied(*args):
+        attempts.append(1)
+        error = PermissionError(13, 'fixture')
+        if winerror is not None:
+            error.winerror = winerror
+        raise error
+
+    monkeypatch.setattr(Path, 'replace', denied)
+    monkeypatch.setattr(worker.ops.time, 'sleep', lambda _: None)
+    with pytest.raises(PermissionError):
+        worker.ops.atomic(path, {'state': 'restarting'})
+    assert len(attempts) == expected_attempts
+    assert json.loads(path.read_text()) == {'state': 'checking'}
+
+
 def test_a_failed_hermes_command_names_its_stage_and_a_failed_restore(operation, monkeypatch):
     # Seen on a real stock install with the login store locked: the receipt said "see the recorded stage",
     # which the dialog never shows, and did not say the old order could not be written back.

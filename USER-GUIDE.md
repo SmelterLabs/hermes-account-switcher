@@ -9,8 +9,9 @@ Hermes can use a **Codex** login and a **Claude** subscription account. If you h
 say a personal and a work account, this plugin lets you pick which one Hermes uses, everywhere on
 this PC, from one button in the Hermes status bar.
 
-Changing accounts means closing and reopening Hermes Desktop and its background gateway, because
-the account choice is read when they start. The plugin does this carefully: it waits until Hermes
+Changing accounts means restarting Hermes's background gateway, and on Hermes versions before 0.22
+also closing and reopening Hermes Desktop, because the account choice is read when they start. On
+0.22 and later Hermes Desktop stays open and reconnects by itself. The plugin does this carefully: it waits until Hermes
 is idle, applies the change everywhere at once, reopens everything, and then checks that the
 change really took effect before it tells you it worked.
 
@@ -109,8 +110,9 @@ Click the account button in the Hermes status bar. It shows the account in use, 
 **Codex: Personal**.
 
 The dialog checks that Hermes is idle. Pick the account you want and press **Switch account**.
-Hermes Desktop closes, the choice is written everywhere and read back, Hermes reopens, and the
-plugin verifies the result. Expect 40 to 70 seconds. Do not force-close anything meanwhile.
+The gateway stops (and, before Hermes 0.22, Hermes Desktop closes), the choice is written
+everywhere and read back, Hermes starts again, and the plugin verifies the result. On 0.22 and
+later Hermes Desktop stays open throughout; a chat shows as reconnecting for a few seconds. Expect 40 to 70 seconds. Do not force-close anything meanwhile.
 
 **What "success" means:** the dialog reports the result from a receipt written at
 `<Hermes home>\logs\codex-account-switch-last.json`. Only a receipt that says

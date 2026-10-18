@@ -1,0 +1,31 @@
+{
+  "what": "The unified-gateway-runtime support (released as 1.2.3) installed on the owner's PC from the private source and proven with one real switch through the dialog. Hermes had been updated to the v0.22 line the night before; 1.2.2 then refused every switch with 'No live Desktop backends were found.'",
+  "when": "2026-10-17 20:06 to 20:33 CT",
+  "machine": "The owner's PC: Windows 11 Pro 10.0.26200; Hermes checkout at 38963dbed8ed (upstream 8259f4ad805f, v0.22 line, plus the owner's overlay); gateway runs as the Windows service HermesGateway; Hermes Desktop attached to it over the gateway's pipe, with no backend of its own",
+  "before": {
+    "dialog": "No live Desktop backends were found.",
+    "desktop_child_processes_serving_the_dashboard": 0
+  },
+  "tests": {"backend": 296, "interface": 34},
+  "real_host_check": "In the gateway's own Python environment: compat.gateway_hosts_desktop() true; compat.require_switch_interfaces() ok",
+  "install": "The plugin's own installer, 15 files, previous copy backed up; then HermesGateway restarted through Windows Service Control (health ok in 51 s, listener owned by the service). Hermes Desktop was not restarted and reconnected by itself.",
+  "switch": {
+    "operation_id": "64bc43ff69cd4fb9b7e8b5e6d38be43e",
+    "request": {"claude": "gmail"},
+    "state": "complete",
+    "started": "20:31:25 CT",
+    "gateway_stopped": "20:31:54 CT",
+    "finished": "20:32:49 CT",
+    "desktop_restarts": false,
+    "old_gateway_pid": 20552,
+    "new_gateway_pid": 45320,
+    "desktop_pid_before_and_after": "unchanged",
+    "claude_identity_after": "token"
+  },
+  "independent_readback": {
+    "gateway_owner_chain": "python.exe <- hermes.exe <- HermesGateway.exe <- services.exe",
+    "health": "ok",
+    "claude_selection": "all 11 profile stores name the gmail claude-auth folder"
+  },
+  "not_run": "A Codex switch on this runtime; a switch refused because a chat was busy on this runtime (covered by the hermetic tests only)."
+}

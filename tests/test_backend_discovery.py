@@ -75,3 +75,15 @@ def test_unrelated_descendant_is_not_a_backend(command):
                             environ=lambda: pytest.fail('Unrelated process must not be probed'))
     with pytest.raises(ops.SwitchError, match='No live Desktop backends'):
         ops.backends(SimpleNamespace(children=lambda **kw: [child]))
+
+
+def test_backend_http_failure_preserves_status_without_private_message(monkeypatch):
+    from urllib.error import HTTPError
+    def denied(*args, **kwargs):
+        raise HTTPError('http://localhost/private-path', 401, 'fixture-private-secret', {}, None)
+    monkeypatch.setattr(ops.urllib.request, 'urlopen', denied)
+    with pytest.raises(ops.SwitchError) as failure:
+        ops.call({'profile': 'beta', 'port': 12345, 'token': 'fixture-token'}, '/local-state')
+    assert failure.value.transport_details == {'type': 'HTTPError', 'code': 401}
+    assert 'fixture-private-secret' not in str(failure.value)
+    assert 'fixture-token' not in repr(failure.value.transport_details)

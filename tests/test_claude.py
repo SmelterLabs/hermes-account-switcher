@@ -194,6 +194,30 @@ def test_claude_verification_requires_backend_env_and_every_store(verifying, mon
         verifying.verify({'codex': None, 'claude': 'work'})
 
 
+def test_backend_verification_preserves_safe_discovery_failure(verifying, monkeypatch):
+    def denied(main):
+        error = PermissionError(13, 'fixture-private-secret')
+        error.winerror = 5
+        raise error
+    monkeypatch.setattr(ops, 'backends', denied)
+    with pytest.raises(PermissionError):
+        verifying.verify({'codex': 'work', 'claude': None})
+    detail = verifying.record['verification_last_check']
+    assert detail['phase'] == 'discovering_backends'
+    assert detail['type'] == 'PermissionError' and detail['winerror'] == 5
+    assert detail['frames'][-1]['function'] == 'denied'
+    assert 'fixture-private-secret' not in json.dumps(verifying.record)
+
+
+def test_backend_verification_records_wrong_account_without_accepting_it(verifying, monkeypatch):
+    monkeypatch.setattr(ops, 'call', lambda *args: {'selected': 'personal', 'uses_codex': True})
+    with pytest.raises(SwitchError, match='Not every reopened Desktop backend'):
+        verifying.verify({'codex': 'work', 'claude': None})
+    detail = verifying.record['verification_last_check']
+    assert detail['phase'] == 'checking_account'
+    assert detail['selected'] == 'personal' and detail['codex_target'] == 'work'
+
+
 def test_recovery_restores_an_unset_claude_selection(home, monkeypatch):
     ops.apply_claude('gmail')
     worker = ops.WindowsOps({})

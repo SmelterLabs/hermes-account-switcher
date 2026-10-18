@@ -169,10 +169,12 @@ def _switch_bound(body):
         raise HTTPException(400, str(exc)) from None
     ops.recover_abandoned_check()
     # Only Desktop-owned backends may start the interactive worker. A service/session-0 caller cannot reopen the user's app.
-    import psutil
-    main = ops.desktop()
-    if main.pid not in {p.pid for p in psutil.Process().parents()}:
-        raise HTTPException(409, 'Open this control in Hermes Desktop, not a service or remote dashboard.')
+    # On the unified gateway runtime the gateway serves this route and Desktop is never closed, so nothing reopens.
+    if not ops.gateway_hosts_desktop():
+        import psutil
+        main = ops.desktop()
+        if main.pid not in {p.pid for p in psutil.Process().parents()}:
+            raise HTTPException(409, 'Open this control in Hermes Desktop, not a service or remote dashboard.')
     operation_id = uuid.uuid4().hex
     ops.LOCK.parent.mkdir(parents=True, exist_ok=True)
     try:

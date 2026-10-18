@@ -2,18 +2,20 @@
 
 A Desktop plugin for Hermes on Windows that switches which **Codex** login and which **Claude**
 subscription account every local Hermes profile on this PC uses. One idle-only restart applies
-either or both. The status-bar dialog reports success only from a post-restart verification
+either or both. On Hermes 0.22 and later that restart is the gateway alone: Hermes Desktop stays
+open and reconnects. The status-bar dialog reports success only from a post-restart verification
 receipt: an accepted request is never treated as a completed switch.
 
 - Plugin ID: `codex-account-switch`
-- Version: **1.2.2**
+- Version: **1.2.3**
 - Platform: **Windows only**
 - Scope: local Hermes profiles on this machine. Remote machines, the standalone Codex app, and
   Claude Code's own sessions are not touched.
 
 ## Status
 
-Version **1.2.2** answers the Hermes catalog review: the plugin now touches Hermes only through
+Version **1.2.3** supports Hermes 0.22, where Hermes Desktop runs no backend of its own and the
+gateway serves every chat: a switch now restarts only the gateway there. 1.2.2 answered the Hermes catalog review: the plugin now touches Hermes only through
 public surfaces, and three documentation claims were made true (see
 [docs/release-notes.md](docs/release-notes.md)). 1.2.1 fixed the button when the chat you have
 open runs on another machine. 1.2.0 was the first public release.
@@ -24,7 +26,7 @@ open runs on another machine. 1.2.0 was the first public release.
 | Claude switching | **Proven live** with two real accounts: real switches in both directions and together with Codex, and which account a real request uses. |
 | First-time install | **Proven** on a blank Windows 11: Hermes's official installer, then this plugin's `setup.cmd`, then a switch through the dialog. |
 | License | MIT. See [LICENSE](LICENSE). |
-| Official plugin catalog | Not listed yet. |
+| Official plugin catalog | Listed as `codex-account-switch`. |
 
 Receipts are in [docs/receipts/](docs/receipts/). The full ledger of what has and has not been
 run is [docs/acceptance.md](docs/acceptance.md).
@@ -166,9 +168,10 @@ transaction:
 
 1. **Check** — nothing changed yet; the target login is confirmed with its provider.
 2. **Freeze** — new work is held back at the gateway and at Hermes Desktop.
-3. **Stop** — Hermes Desktop closes and the gateway stops.
+3. **Stop** — Hermes Desktop closes and the gateway stops. On Hermes 0.22 and later only the
+   gateway stops; Hermes Desktop stays open.
 4. **Apply** — the selection is written to every store and read back.
-5. **Start** — the gateway and Hermes Desktop start again.
+5. **Start** — the gateway and Hermes Desktop start again (on 0.22 and later, the gateway alone).
 6. **Verify** — new processes, every reopened backend, every stored order.
 
 A switch takes about 40 to 70 seconds. Only a receipt that says `"state": "complete"`
@@ -201,7 +204,8 @@ plugin contains no self-updater.
 - If the target Claude login has expired, the plugin first runs the `claude` CLI once against a
   closed local port so the CLI renews its own token. That renewal goes to Anthropic and replaces
   the token, including the refresh token, in that account's Hermes `claude-auth` folder.
-- Restart scope is exactly Hermes Desktop and the Hermes gateway. Nothing else is stopped,
+- Restart scope is exactly Hermes Desktop and the Hermes gateway (on Hermes 0.22 and later, the
+  gateway alone). Nothing else is stopped,
   started, installed or configured.
 - The plugin changes nothing inside Hermes: no function of Hermes is replaced, wrapped or
   rebound, and no private name is read. Whether Hermes is idle is Hermes's own answer.

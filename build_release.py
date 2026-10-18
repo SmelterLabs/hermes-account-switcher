@@ -24,12 +24,12 @@ tests/test_backend_discovery.py tests/test_claude.py tests/test_compat.py
 tests/test_per_profile.py tests/test_process_liveness.py tests/test_recovery.py
 tests/test_reload.py tests/test_settings.py tests/test_switch.py tests/test_worker.py
 tests/test_install.py tests/test_release.py tests/test_stock_runtime.py tests/test_stock_gateway.py
-tests/test_setup.py tests/test_first_run.py
+tests/test_setup.py tests/test_first_run.py tests/test_unified_runtime.py
 docs/acceptance.md docs/compatibility.md docs/license-decision.md docs/release-notes.md
 docs/receipts/2026-09-28-vm-real-switch.json docs/receipts/2026-09-28-vm-stock-gateway-lifecycle.json
 docs/receipts/2026-09-28-vm-billing-proof.json docs/receipts/2026-09-28-vm-refusals-and-failures.json
 docs/receipts/2026-09-28-vm-hermes-update.json docs/receipts/2026-09-29-vm-first-install.json
-docs/receipts/2026-09-29-vm-claude.json
+docs/receipts/2026-09-29-vm-claude.json docs/receipts/2026-10-17-unified-runtime-owner-pc.json
 '''.split()))
 
 

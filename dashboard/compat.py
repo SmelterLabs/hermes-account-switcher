@@ -5,6 +5,7 @@ read. Every unavailable interface refuses switching before any process or creden
 """
 from importlib import import_module
 from inspect import signature
+from time import sleep
 
 
 class UnsupportedRuntime(RuntimeError):
@@ -81,6 +82,17 @@ def drain_control():
     return import_module('gateway.drain_control')
 
 
+def gateway_hosts_desktop():
+    """True on Hermes with the unified gateway runtime (v0.22 on), where Hermes Desktop starts no backend
+    of its own: it attaches to the gateway, which serves the dashboard and this plugin and runs every turn.
+    The gateway is then the only account consumer, and this plugin's routes run inside it."""
+    from importlib.util import find_spec
+    try:
+        return find_spec('hermes_cli.gateway_runtime') is not None
+    except Exception:
+        return False
+
+
 def desktop_idle_blockers():
     """Why this Desktop backend may not be closed right now, in plain words; empty when it is idle.
 
@@ -88,8 +100,14 @@ def desktop_idle_blockers():
     it retires a backend. An unreadable answer is a blocker, never idle.
     """
     try:
-        proof = import_module('hermes_cli.web_server_idle_proof').idle_proof()
-        idle, reason, detail = proof.get('idle'), proof.get('reason'), proof.get('detail')
+        # Hermes also reports its admission ledger while one admitted request is merely in flight (seen in the
+        # first seconds after Desktop opens), so that answer is asked again for about two seconds before it counts.
+        for attempt in range(5):
+            proof = import_module('hermes_cli.web_server_idle_proof').idle_proof()
+            idle, reason, detail = proof.get('idle'), proof.get('reason'), proof.get('detail')
+            if detail != 'retirement_admission' or attempt == 4:
+                break
+            sleep(.5)
     except Exception:
         return [IDLE_UNAVAILABLE]
     if idle is True:
@@ -106,7 +124,7 @@ def desktop_idle_blockers():
     if detail.startswith('cron:'):
         return ['A scheduled job is running.']
     if detail == 'retirement_admission':
-        return ['Hermes Desktop is already closing this backend.']
+        return ['Hermes is handling a request; retry in a moment.']
     return ['Desktop is busy.']
 
 
