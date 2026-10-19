@@ -13,7 +13,7 @@ import * as sdk from '@hermes/plugin-sdk'
 import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
-const ID = 'codex-account-switch'
+const ID = 'account-switcher'
 // 1.1.1: managed launcher support, explicit preflight errors, dated last-attempt notices.
 const STATUS_POLL_INTERVAL_MS = 10_000
 const DEFAULT_SCOPE = 'All Hermes profiles on this PC'
@@ -318,11 +318,11 @@ function SwitchDialog({
               className: 'space-y-3',
               children: [
                 current.codex.accounts.length ? jsx(AccountSelect, {
-                  id: 'codex-account-switch-codex', label: 'Target Codex account', value: codexTarget, onChange: onCodexChange,
+                  id: 'account-switcher-codex', label: 'Target Codex account', value: codexTarget, onChange: onCodexChange,
                   options: codexOptions, disabled: selectorsDisabled, help: 'Every profile’s Codex login order changes together.'
                 }, 'codex') : null,
                 current.claude.accounts.length ? jsx(AccountSelect, {
-                  id: 'codex-account-switch-claude', label: 'Target Claude account', value: claudeTarget, onChange: onClaudeChange,
+                  id: 'account-switcher-claude', label: 'Target Claude account', value: claudeTarget, onChange: onClaudeChange,
                   options: claudeOptions, disabled: selectorsDisabled,
                   help: 'Which Claude subscription the Hermes Claude option bills. Accounts marked not logged in need signing in first: setup.cmd claude <key>.'
                 }, 'claude') : null,
@@ -392,7 +392,7 @@ function agentInstructions(found) {
 }
 
 function NameRow({ kind, row, value, onChange, disabled }) {
-  const id = `codex-account-switch-name-${kind}-${row.id.replace(/[^A-Za-z0-9]+/g, '-')}`
+  const id = `account-switcher-name-${kind}-${row.id.replace(/[^A-Za-z0-9]+/g, '-')}`
   const bad = value.trim() !== '' && !NAME_PATTERN.test(value.trim().replace(/\s+/g, ' '))
   return jsxs('div', {
     className: 'space-y-1',

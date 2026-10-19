@@ -6,7 +6,7 @@ either or both. On Hermes 0.22 and later that restart is the gateway alone: Herm
 open and reconnects. The status-bar dialog reports success only from a post-restart verification
 receipt: an accepted request is never treated as a completed switch.
 
-- Plugin ID: `codex-account-switch`
+- Plugin ID: `account-switcher`
 - Version: **1.2.3**
 - Platform: **Windows only**
 - Scope: local Hermes profiles on this machine. Remote machines, the standalone Codex app, and
@@ -26,7 +26,7 @@ open runs on another machine. 1.2.0 was the first public release.
 | Claude switching | **Proven live** with two real accounts: real switches in both directions and together with Codex, and which account a real request uses. |
 | First-time install | **Proven** on a blank Windows 11: Hermes's official installer, then this plugin's `setup.cmd`, then a switch through the dialog. |
 | License | MIT. See [LICENSE](LICENSE). |
-| Official plugin catalog | Listed as `codex-account-switch`. |
+| Official plugin catalog | Listed as `account-switcher`. |
 
 Receipts are in [docs/receipts/](docs/receipts/). The full ledger of what has and has not been
 run is [docs/acceptance.md](docs/acceptance.md).
@@ -69,7 +69,7 @@ Unpack the release ZIP, open a terminal in that folder, and run:
 
 ```
 setup.cmd
-hermes plugins enable codex-account-switch
+hermes plugins enable account-switcher
 ```
 
 Run them one at a time: `setup.cmd` asks questions and waits for your answers.
@@ -124,7 +124,7 @@ one. For a profile named `work`:
 
 ```
 setup.cmd profile work
-hermes -p work plugins enable codex-account-switch
+hermes -p work plugins enable account-switcher
 ```
 
 Until that is done the dialog blocks the switch and names the profile and the command. Enable the
@@ -142,7 +142,7 @@ The settings file lives outside the plugin's code, so updating or removing the p
 touches it:
 
 ```
-<Hermes home>\plugin-data\codex-account-switch\settings.json
+<Hermes home>\plugin-data\account-switcher\settings.json
 ```
 
 `setup.cmd` writes it. [settings.example.json](settings.example.json) shows the shape.
@@ -175,7 +175,7 @@ transaction:
 6. **Verify** — new processes, every reopened backend, every stored order.
 
 A switch takes about 40 to 70 seconds. Only a receipt that says `"state": "complete"`
-(`<Hermes home>\logs\codex-account-switch-last.json`) means the switch took effect.
+(`<Hermes home>\logs\account-switcher-last.json`) means the switch took effect.
 
 If something fails while Hermes is closed, the previous selection is restored and Hermes is
 reopened. If the switch itself is cut off (a crash, a power cut), reopen Hermes Desktop: the
@@ -190,7 +190,7 @@ plugin clears what the interrupted switch left behind and the dialog says where 
 | Uninstall | `python install.py uninstall --home <path>` | Removes only the code it installed. Settings, logins and login folders stay. |
 
 None of these change which account is selected. Once the plugin is listed in the official
-catalog, prefer `hermes plugins install codex-account-switch`, which installs from an exact
+catalog, prefer `hermes plugins install account-switcher`, which installs from an exact
 reviewed commit; `setup.cmd` run from the installed folder then only writes the settings. The
 plugin contains no self-updater.
 

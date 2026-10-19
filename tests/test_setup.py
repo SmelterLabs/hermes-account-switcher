@@ -45,7 +45,7 @@ def run(home, *extra, answer='y', names=None):
 
 
 def settings_file(home):
-    return home / 'plugin-data/codex-account-switch/settings.json'
+    return home / 'plugin-data/account-switcher/settings.json'
 
 
 def test_writes_settings_the_plugin_accepts_from_what_is_signed_in(home):
@@ -298,7 +298,7 @@ def asking(answers, said):
 def test_a_command_typed_ahead_is_not_taken_as_a_name(home):
     sign_in(home, ('device_code', 'first@example.invalid', 'account-one'))
     said = []
-    ask = asking(['hermes plugins enable codex-account-switch', r'.\setup.cmd claude main me@example.invalid', 'Mine', 'y'], said)
+    ask = asking(['hermes plugins enable account-switcher', r'.\setup.cmd claude main me@example.invalid', 'Mine', 'y'], said)
     assert setup.main(['--home', str(home)], ask=ask, say=said.append) == 0
     assert load_settings(settings_file(home)).codex['mine'].label == 'Mine'
     assert sum('cannot be a name' in line for line in said) == 2

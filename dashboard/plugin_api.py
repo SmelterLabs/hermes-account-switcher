@@ -14,7 +14,7 @@ HERE = Path(__file__).resolve().parent
 # submodules of a package named after this plugin, never by putting dashboard/ on that process's sys.path,
 # where generic names like `settings` and `compat` would shadow, or be shadowed by, other modules. The test
 # suite imports this file as `plugin_api` from dashboard/ on its own sys.path and keeps the plain names.
-PACKAGE = 'codex_account_switch_dashboard'
+PACKAGE = 'account_switcher_dashboard'
 if __name__ != 'plugin_api' and PACKAGE not in sys.modules:
     sys.modules[PACKAGE] = ModuleType(PACKAGE)
     sys.modules[PACKAGE].__path__ = [str(HERE)]

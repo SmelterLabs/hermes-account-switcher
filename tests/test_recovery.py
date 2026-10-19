@@ -89,7 +89,7 @@ def test_a_cut_off_check_also_clears_its_own_markers(client, monkeypatch):
 
 def test_only_this_plugins_drain_markers_are_removed(monkeypatch, tmp_path):
     homes = [tmp_path, tmp_path / 'profiles' / 'beta', tmp_path / 'profiles' / 'gamma']
-    owners = {homes[0]: 'codex-account-switch', homes[1]: 'hermes-update', homes[2]: None}
+    owners = {homes[0]: 'account-switcher', homes[1]: 'hermes-update', homes[2]: None}
     removed = []
     drain = SimpleNamespace(
         read_drain_request=lambda home: {'principal': owners[home]} if owners[home] else None,

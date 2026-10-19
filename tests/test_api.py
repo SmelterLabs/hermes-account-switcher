@@ -201,7 +201,7 @@ def test_hermes_loads_the_api_without_putting_generic_modules_in_its_server(tmp_
     probe = """
 import importlib.util, sys
 from pathlib import Path
-spec = importlib.util.spec_from_file_location('hermes_dashboard_plugin_codex-account-switch', sys.argv[1])
+spec = importlib.util.spec_from_file_location('hermes_dashboard_plugin_account-switcher', sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)

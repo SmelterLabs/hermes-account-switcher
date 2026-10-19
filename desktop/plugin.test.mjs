@@ -41,7 +41,7 @@ function makeRest({ status = [STATUS_PERSONAL_IDLE], preflight = null, statusFai
 function registerWith(rest) {
   const contributions = []
   const ctx = {
-    source: 'plugin:codex-account-switch',
+    source: 'plugin:account-switcher',
     rest,
     register(contribution) {
       contributions.push(contribution)
@@ -75,7 +75,7 @@ afterEach(() => {
   delete globalThis.__activeConnectionId
 })
 
-describe('codex-account-switch desktop plugin', () => {
+describe('account-switcher desktop plugin', () => {
   it('sends nothing while the active chat runs on a remote connection, and says why', async () => {
     globalThis.__activeConnectionId = 'forge'
     const rest = makeRest()
@@ -200,7 +200,7 @@ describe('codex-account-switch desktop plugin', () => {
   it('loads with the SDK stub, registers a status button, and polls only the cheap status route', async () => {
     const rest = makeRest()
     const { statusContribution, contributions } = registerWith(rest)
-    expect(plugin.id).toBe('codex-account-switch')
+    expect(plugin.id).toBe('account-switcher')
     expect(contributions).toHaveLength(1)
     expect(statusContribution.area).toBe('statusBar.right')
     render(statusContribution.render())
@@ -402,8 +402,8 @@ describe('first run: the dialog sets the plugin up', () => {
   }
   const FOUND = {
     settings_present: false,
-    settings_file: 'C:\\Users\\example-user\\AppData\\Local\\hermes\\plugin-data\\codex-account-switch\\settings.json',
-    setup_command: 'C:\\Users\\example-user\\AppData\\Local\\hermes\\plugins\\codex-account-switch\\setup.cmd',
+    settings_file: 'C:\\Users\\example-user\\AppData\\Local\\hermes\\plugin-data\\account-switcher\\settings.json',
+    setup_command: 'C:\\Users\\example-user\\AppData\\Local\\hermes\\plugins\\account-switcher\\setup.cmd',
     gateway_service: 'FixtureGateway',
     name_rule: 'use up to 24 letters, digits and spaces',
     codex: [{ email: 'first@example.invalid', name: 'First', set_up: false }, { email: 'second@example.invalid', name: 'Second', set_up: false }],

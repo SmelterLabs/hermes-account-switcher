@@ -10,7 +10,7 @@ import pytest
 
 ROOT = Path(__file__).parents[1]
 INSTALL = ROOT / "install.py"
-PLUGIN = "codex-account-switch"
+PLUGIN = "account-switcher"
 
 sys.path.insert(0, str(ROOT))
 
@@ -93,7 +93,7 @@ def test_install_refuses_switch_lock(tmp_path):
     src = make_source(tmp_path / "src")
     home = tmp_path / "home"
     (home / "logs").mkdir(parents=True)
-    (home / "logs" / "codex-account-switch.lock").write_text("{}", encoding="utf-8")
+    (home / "logs" / "account-switcher.lock").write_text("{}", encoding="utf-8")
     proc = run_cli("install", "--home", str(home), "--source", str(src))
     assert proc.returncode != 0
     assert not (home / "plugins").exists()
@@ -260,7 +260,7 @@ def test_uninstall_and_rollback_refuse_switch_lock(tmp_path):
     home.mkdir()
     assert run_cli("install", "--home", str(home), "--source", str(src)).returncode == 0
     (home / "logs").mkdir(exist_ok=True)
-    (home / "logs" / "codex-account-switch.lock").write_text("{}", encoding="utf-8")
+    (home / "logs" / "account-switcher.lock").write_text("{}", encoding="utf-8")
     assert run_cli("uninstall", "--home", str(home)).returncode != 0
     assert run_cli("rollback", "--home", str(home)).returncode != 0
     assert (target_of(home) / "plugin.yaml").exists()
@@ -299,3 +299,70 @@ def test_hermes_switch_settings_override_is_ignored(tmp_path, monkeypatch):
     home.mkdir()
     assert run_cli("install", "--home", str(home), "--source", str(src)).returncode == 0
     assert not outside.exists()
+
+
+LEGACY = "codex-account-switch"
+
+
+def legacy_install(home, tmp_path):
+    """An install made by 1.2.3 under the plugin's earlier name, with its settings."""
+    import install
+    src = make_source(tmp_path / "legacy-src", version="1.2.3")
+    target = Path(home) / "plugins" / LEGACY
+    hashes = {}
+    for rel, path in install.source_files(src):
+        (target / rel).parent.mkdir(parents=True, exist_ok=True)
+        (target / rel).write_bytes(path.read_bytes())
+        hashes[rel] = hashlib.sha256(path.read_bytes()).hexdigest()
+    (target / ".install-ownership.json").write_text(
+        json.dumps({"plugin": LEGACY, "files": hashes}), encoding="utf-8")
+    settings = Path(home) / "plugin-data" / LEGACY / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text('{"fixture": "old settings"}', encoding="utf-8")
+    return target, settings
+
+
+def test_install_moves_an_install_made_under_the_earlier_name(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    old_target, old_settings = legacy_install(home, tmp_path)
+    proc = run_cli("install", "--home", str(home), "--source", str(make_source(tmp_path / "src")))
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["migrated"] == ["settings", "old plugin folder removed"]
+    assert not old_target.exists()
+    assert list((home / "plugins").iterdir()) == [target_of(home)]
+    new_settings = home / "plugin-data" / PLUGIN / "settings.json"
+    assert new_settings.read_bytes() == old_settings.read_bytes()
+    assert old_settings.exists()  # The old copy stays; only the new name is read.
+
+
+def test_migration_never_overwrites_settings_under_the_new_name(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    legacy_install(home, tmp_path)
+    current = home / "plugin-data" / PLUGIN / "settings.json"
+    current.parent.mkdir(parents=True)
+    current.write_text('{"fixture": "new settings"}', encoding="utf-8")
+    proc = run_cli("install", "--home", str(home), "--source", str(make_source(tmp_path / "src")))
+    assert proc.returncode == 0, proc.stderr
+    assert current.read_text(encoding="utf-8") == '{"fixture": "new settings"}'
+
+
+def test_migration_keeps_an_old_folder_it_did_not_write(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    old_target, _ = legacy_install(home, tmp_path)
+    (old_target / "notes.txt").write_text("mine", encoding="utf-8")
+    proc = run_cli("install", "--home", str(home), "--source", str(make_source(tmp_path / "src")))
+    assert proc.returncode == 0, proc.stderr
+    assert "old plugin folder kept" in json.loads(proc.stdout)["migrated"][-1]
+    assert (old_target / "notes.txt").read_text(encoding="utf-8") == "mine"
+
+
+def test_install_refuses_a_switch_lock_under_the_earlier_name(tmp_path):
+    home = tmp_path / "home"
+    (home / "logs").mkdir(parents=True)
+    (home / "logs" / f"{LEGACY}.lock").write_text("{}", encoding="utf-8")
+    proc = run_cli("install", "--home", str(home), "--source", str(make_source(tmp_path / "src")))
+    assert proc.returncode != 0
+    assert not (home / "plugins").exists()

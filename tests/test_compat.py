@@ -97,12 +97,12 @@ def test_gateway_ledger_requires_fresh_heartbeat(monkeypatch, tmp_path, stamp):
 
 def test_missing_profile_enable_blocks_before_desktop_or_mutation(monkeypatch, tmp_path):
     monkeypatch.setattr(ops, 'ROOT', tmp_path)
-    package = tmp_path / 'plugins/codex-account-switch/dashboard'
+    package = tmp_path / 'plugins/account-switcher/dashboard'
     package.mkdir(parents=True)
     (package / 'manifest.json').write_text('{}', encoding='utf-8')
     (tmp_path / 'plugins/claude-subscription-directsdk').mkdir()
     (tmp_path / 'config.yaml').write_text(
-        'plugins:\n  enabled: [codex-account-switch, claude-subscription-directsdk]\n', encoding='utf-8')
+        'plugins:\n  enabled: [account-switcher, claude-subscription-directsdk]\n', encoding='utf-8')
     profile = tmp_path / 'profiles' / 'other'
     profile.mkdir(parents=True)
     (profile / 'config.yaml').write_text('plugins:\n  enabled: [claude-subscription-directsdk]\n', encoding='utf-8')

@@ -1,5 +1,24 @@
 # Release notes — Hermes Account Switcher
 
+## 1.3.0
+
+The plugin is renamed from `codex-account-switch` to `account-switcher`. It switches Claude
+accounts as well as Codex logins, and the old name said only Codex. The repository keeps
+its name. Nothing about how a switch works changed.
+
+- **New name everywhere it appears:** the plugin and catalog name, the install folder
+  (`plugins\account-switcher`), the settings folder (`plugin-data\account-switcher`), the receipt and
+  lock files (`logs\account-switcher-last.json`, `logs\account-switcher.lock`) and the plugin's routes.
+- **The offline installer moves a 1.2.3 install over.** It copies the settings from the old
+  folder when the new one has none (it never overwrites), and removes the old plugin folder only
+  when the installer wrote it and nothing in it changed; otherwise it keeps the folder and says so.
+  It refuses while a switch lock from the old name exists. It still never enables a plugin.
+- **One step is yours after updating:** run `hermes plugins enable account-switcher` in every
+  profile, then `hermes plugins disable codex-account-switch` (or remove it from the list) and
+  restart Hermes. Installed from the catalog instead? Run `hermes plugins install account-switcher`,
+  then `hermes plugins remove codex-account-switch`; copy
+  `plugin-data\codex-account-switch\settings.json` to `plugin-data\account-switcher\` first.
+
 ## 1.2.3
 
 Supports Hermes 0.22, whose unified gateway runtime runs every chat in the gateway: Hermes Desktop

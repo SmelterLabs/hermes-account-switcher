@@ -26,7 +26,7 @@ def without_any_host_yaml(monkeypatch):
 
 
 def install_backend_package(root):
-    package = root / 'plugins/codex-account-switch/dashboard'
+    package = root / 'plugins/account-switcher/dashboard'
     package.mkdir(parents=True, exist_ok=True)
     (package / 'manifest.json').write_text('{}', encoding='utf-8')
 
@@ -48,8 +48,8 @@ def test_profile_configuration_parses_through_host_hermes_yaml(monkeypatch, tmp_
     model_host_yaml(monkeypatch, json.loads)
     monkeypatch.setattr(ops, 'ROOT', tmp_path)
     install_backend_package(tmp_path)
-    write_config(tmp_path, ['codex-account-switch'])
-    write_config(tmp_path / 'profiles' / 'beta', ['codex-account-switch'])
+    write_config(tmp_path, ['account-switcher'])
+    write_config(tmp_path / 'profiles' / 'beta', ['account-switcher'])
     assert ops.plugin_profile_blockers() == []
 
 
@@ -57,11 +57,11 @@ def test_denylist_wins_over_allowlist_for_host_parsed_configuration(monkeypatch,
     model_host_yaml(monkeypatch, json.loads)
     monkeypatch.setattr(ops, 'ROOT', tmp_path)
     install_backend_package(tmp_path)
-    write_config(tmp_path, ['codex-account-switch'])
-    write_config(tmp_path / 'profiles' / 'beta', ['codex-account-switch'], ['codex-account-switch'])
+    write_config(tmp_path, ['account-switcher'])
+    write_config(tmp_path / 'profiles' / 'beta', ['account-switcher'], ['account-switcher'])
     assert ops.plugin_profile_blockers() == [
         'beta: Account Switcher is not enabled in this profile. Install it into this profile\'s folder, run '
-        '"hermes -p beta plugins enable codex-account-switch", then restart Hermes Desktop.']
+        '"hermes -p beta plugins enable account-switcher", then restart Hermes Desktop.']
 
 
 def test_the_first_profile_is_told_the_command_without_a_profile_flag(monkeypatch, tmp_path):
@@ -72,14 +72,14 @@ def test_the_first_profile_is_told_the_command_without_a_profile_flag(monkeypatc
     write_config(tmp_path, [])
     assert ops.plugin_profile_blockers() == [
         'default: Account Switcher is not enabled in this profile. Install it into this profile\'s folder, run '
-        '"hermes plugins enable codex-account-switch", then restart Hermes Desktop.']
+        '"hermes plugins enable account-switcher", then restart Hermes Desktop.']
 
 
 def test_missing_host_parser_is_an_explicit_refusal(monkeypatch, tmp_path):
     without_any_host_yaml(monkeypatch)
     monkeypatch.setattr(ops, 'ROOT', tmp_path)
     install_backend_package(tmp_path)
-    write_config(tmp_path, ['codex-account-switch'])
+    write_config(tmp_path, ['account-switcher'])
     blockers = ops.plugin_profile_blockers()
     assert len(blockers) == 1 and 'No YAML parser is available' in blockers[0]
 
@@ -91,7 +91,7 @@ def test_broken_host_parser_is_an_explicit_refusal(monkeypatch, tmp_path):
     model_host_yaml(monkeypatch, broken)
     monkeypatch.setattr(ops, 'ROOT', tmp_path)
     install_backend_package(tmp_path)
-    write_config(tmp_path, ['codex-account-switch'])
+    write_config(tmp_path, ['account-switcher'])
     blockers = ops.plugin_profile_blockers()
     assert len(blockers) == 1 and 'could not parse the profile configuration' in blockers[0]
 
@@ -101,7 +101,7 @@ def test_preflight_refuses_without_desktop_scans_when_no_parser_exists(monkeypat
     monkeypatch.setattr(ops, 'ROOT', tmp_path)
     install_backend_package(tmp_path)
     (tmp_path / 'plugins/claude-subscription-directsdk').mkdir(parents=True)
-    write_config(tmp_path, ['codex-account-switch', 'claude-subscription-directsdk'])
+    write_config(tmp_path, ['account-switcher', 'claude-subscription-directsdk'])
     monkeypatch.setattr(ops, 'selection_summary', lambda: {'codex': {}, 'claude': {}})
     monkeypatch.setattr(ops, 'desktop', lambda: pytest.fail('No Desktop scan without a parser'))
     result = ops.preflight()

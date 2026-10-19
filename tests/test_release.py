@@ -24,8 +24,8 @@ def source(tmp_path, module):
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('# benign fixture\n', encoding='utf-8')
-    (root / 'plugin.yaml').write_text('name: codex-account-switch\nversion: "1.2.0-rc.1"\n', encoding='utf-8')
-    (root / 'dashboard/manifest.json').write_text(json.dumps({'name': 'codex-account-switch', 'version': '1.2.0-rc.1'}), encoding='utf-8')
+    (root / 'plugin.yaml').write_text('name: account-switcher\nversion: "1.2.0-rc.1"\n', encoding='utf-8')
+    (root / 'dashboard/manifest.json').write_text(json.dumps({'name': 'account-switcher', 'version': '1.2.0-rc.1'}), encoding='utf-8')
     return root
 
 

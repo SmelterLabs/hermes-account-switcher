@@ -44,7 +44,7 @@ if not exist "%TARGET%\config.yaml" (
   exit /b 1
 )
 rem A copy Hermes installed from its catalog already sits in the plugins folder; only settings are needed then.
-if /i "%HERE%"=="%TARGET%\plugins\codex-account-switch\" goto settings
+if /i "%HERE%"=="%TARGET%\plugins\account-switcher\" goto settings
 "%PY%" "%HERE%install.py" install --home "%TARGET%"
 if errorlevel 1 exit /b 1
 :settings
@@ -54,7 +54,7 @@ if errorlevel 1 exit /b 1
 :enable
 echo.
 echo Next, turn the plugin on yourself:
-if defined PROFILE (echo   hermes -p %PROFILE% plugins enable codex-account-switch) else (echo   hermes plugins enable codex-account-switch)
+if defined PROFILE (echo   hermes -p %PROFILE% plugins enable account-switcher) else (echo   hermes plugins enable account-switcher)
 echo Then restart Hermes Desktop. Under Capabilities, Plugins, Installed, turn on the switch on the plugin's
 echo card; if no account button appears at the bottom right, open the card and turn on "Desktop" as well.
 exit /b 0

@@ -11,7 +11,9 @@ import sys
 import tempfile
 import uuid
 
-PLUGIN = 'codex-account-switch'
+PLUGIN = 'account-switcher'
+# The plugin's name up to 1.2.3. An install under it is moved to PLUGIN by the next install.
+LEGACY = 'codex-account-switch'
 OWNERSHIP = '.install-ownership.json'
 SOURCE = Path(__file__).resolve().parent
 
@@ -58,13 +60,13 @@ def generated(rel):
     return '__pycache__' in PurePosixPath(rel).parts and rel.endswith('.pyc')
 
 
-def owned(root, exact=False):
+def owned(root, exact=False, plugin=PLUGIN):
     files = {rel: path for rel, path in tree_files(root).items() if not generated(rel)}
     if OWNERSHIP not in files:
         raise ValueError('No installer ownership receipt; existing files are preserved.')
     data = json.loads(files[OWNERSHIP].read_text(encoding='utf-8'))
     hashes = data.get('files')
-    if (data.get('plugin') != PLUGIN or not isinstance(hashes, dict) or not hashes
+    if (data.get('plugin') != plugin or not isinstance(hashes, dict) or not hashes
             or any(not allowed(k) or not isinstance(v, str)
                    or not re.fullmatch('[0-9a-f]{64}', v) for k, v in hashes.items())):
         raise ValueError('Invalid ownership receipt; refusing mutation.')
@@ -89,6 +91,9 @@ def operation(home):
     logs = safe_path(home / 'logs')
     lock = safe_path(logs / f'{PLUGIN}.lock')
     logs.mkdir(exist_ok=True)
+    if safe_path(logs / f'{LEGACY}.lock').exists():
+        raise ValueError('A switch lock from the plugin\'s earlier name exists; nothing changed. If no switch is '
+                         'running, open Hermes Desktop once so the old plugin can clear it, then run this again.')
     payload = json.dumps({'operation_id': 'installer-' + uuid.uuid4().hex, 'pid': os.getpid()})
     try:
         with lock.open('x', encoding='utf-8') as stream:
@@ -171,7 +176,30 @@ def install_plugin(source, home):
             owned(previous_backup, exact=True)
             shutil.rmtree(previous_backup)
         return {'action': 'install', 'path': str(target), 'files': len(hashes),
+                'migrated': migrate_legacy(home, target),
                 'account_changed': False, 'profiles_enabled': [], 'processes_restarted': False}
+
+
+def migrate_legacy(home, target):
+    """Move what the plugin's earlier name left behind. Settings are copied when the new name has none, so
+    the switch keeps its accounts; the old plugin folder is removed only when this installer wrote it and
+    nothing in it changed, so Hermes does not load two copies. Enablement is never changed here."""
+    home = safe_path(home)
+    moved = []
+    old_settings = safe_path(home / 'plugin-data' / LEGACY / 'settings.json')
+    new_settings = safe_path(home / 'plugin-data' / PLUGIN / 'settings.json')
+    if old_settings.is_file() and not new_settings.exists():
+        _copy_file(old_settings, new_settings)
+        moved.append('settings')
+    old_plugin = safe_path(home / 'plugins' / LEGACY)
+    if old_plugin.exists() and old_plugin != target:
+        try:
+            owned(old_plugin, exact=True, plugin=LEGACY)
+        except ValueError:
+            return moved + ['old plugin folder kept: not installed by this installer or changed since']
+        shutil.rmtree(old_plugin)
+        moved.append('old plugin folder removed')
+    return moved
 
 
 def rollback_plugin(home):

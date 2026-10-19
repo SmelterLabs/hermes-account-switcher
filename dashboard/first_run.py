@@ -19,7 +19,7 @@ if __package__:  # imported by the dashboard API inside Hermes's web server
 else:  # the helper scripts and the test suite
     from settings import SettingsError, _parse_settings, settings_path
 
-PLUGIN = 'codex-account-switch'
+PLUGIN = 'account-switcher'
 DESKTOP = Path('apps/desktop/release/win-unpacked/Hermes.exe')
 NAME = r'[A-Za-z0-9][A-Za-z0-9 _-]{0,23}'
 KEY = r'[a-z][a-z0-9_-]{0,39}'

@@ -70,10 +70,10 @@ def build(source, output):
         raise ValueError('Missing package version.')
     version = match.group(1)
     manifest = json.loads(contents['dashboard/manifest.json'])
-    if manifest.get('name') != 'codex-account-switch' or manifest.get('version') != version:
+    if manifest.get('name') != 'account-switcher' or manifest.get('version') != version:
         raise ValueError('Plugin and dashboard metadata must agree.')
     output.mkdir(parents=True, exist_ok=True)
-    archive = output / f'codex-account-switch-{version}.zip'
+    archive = output / f'account-switcher-{version}.zip'
     for target in (archive, archive.with_suffix('.manifest.json'), archive.with_suffix('.sha256')):
         safe_path(target)
     with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as zipped:
@@ -84,7 +84,7 @@ def build(source, output):
             info.external_attr = 0o100644 << 16
             zipped.writestr(info, data)
     archive.with_suffix('.manifest.json').write_text(json.dumps({
-        'plugin': 'codex-account-switch', 'version': version,
+        'plugin': 'account-switcher', 'version': version,
         'files': {rel: sha(data) for rel, data in contents.items()},
     }, indent=2, sort_keys=True) + '\n', encoding='utf-8')
     archive.with_suffix('.sha256').write_text(sha(archive.read_bytes()) + '  ' + archive.name + '\n', encoding='utf-8')

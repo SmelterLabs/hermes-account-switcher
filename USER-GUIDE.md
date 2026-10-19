@@ -60,7 +60,7 @@ the names you already have.
 ## Step 2 — Turn it on
 
 ```
-hermes plugins enable codex-account-switch
+hermes plugins enable account-switcher
 ```
 
 Restart Hermes Desktop. Then open **Capabilities → Plugins**, choose **Installed**, and turn on
@@ -87,7 +87,7 @@ because a switch covers all of them. For a profile named `work`:
 
 ```
 setup.cmd profile work
-hermes -p work plugins enable codex-account-switch
+hermes -p work plugins enable account-switcher
 ```
 
 ## Step 3 — Sign in your Claude accounts (Claude switching only)
@@ -115,7 +115,7 @@ everywhere and read back, Hermes starts again, and the plugin verifies the resul
 later Hermes Desktop stays open throughout; a chat shows as reconnecting for a few seconds. Expect 40 to 70 seconds. Do not force-close anything meanwhile.
 
 **What "success" means:** the dialog reports the result from a receipt written at
-`<Hermes home>\logs\codex-account-switch-last.json`. Only a receipt that says
+`<Hermes home>\logs\account-switcher-last.json`. Only a receipt that says
 `"state": "complete"` means the switch took effect.
 
 ## When it will refuse
@@ -162,14 +162,30 @@ account in again with `hermes auth add openai-codex`.
 
 None of these change which account is selected. Only a switch does that.
 
+## Updating from 1.2.3 (the plugin's old name)
+
+Up to 1.2.3 the plugin was called `codex-account-switch`. From 1.3.0 it is `account-switcher`.
+Running `setup.cmd` from the 1.3.0 release moves your settings and removes the old plugin folder
+(only if nothing in it was changed). Then turn on the new name and turn off the old one, once in
+each profile, and restart Hermes:
+
+```
+hermes plugins enable account-switcher
+hermes plugins disable codex-account-switch
+```
+
+Installed from the catalog instead? Copy `<Hermes home>\plugin-data\codex-account-switch\settings.json`
+into `<Hermes home>\plugin-data\account-switcher\`, then run
+`hermes plugins install account-switcher` and `hermes plugins remove codex-account-switch`.
+
 ## Where things live
 
 | What | Where |
 |---|---|
-| Your settings | `<Hermes home>\plugin-data\codex-account-switch\settings.json` |
-| Switch receipts | `<Hermes home>\logs\codex-account-switch-last.json` |
+| Your settings | `<Hermes home>\plugin-data\account-switcher\settings.json` |
+| Switch receipts | `<Hermes home>\logs\account-switcher-last.json` |
 | Claude login folders | wherever each account's `directory` points |
-| The plugin's code | `<Hermes home>\plugins\codex-account-switch` (and the same inside each profile) |
+| The plugin's code | `<Hermes home>\plugins\account-switcher` (and the same inside each profile) |
 
 ## Troubleshooting
 
@@ -177,7 +193,7 @@ None of these change which account is selected. Only a switch does that.
 |---|---|
 | No account button in the status bar | A switch is off. Under Capabilities → Plugins → Installed, turn on the switch on the plugin's card, then click the card to open it and turn on **Desktop** as well: newer Hermes builds keep a separate switch for a plugin's button. Restart Hermes Desktop after enabling the plugin. |
 | An account has the wrong name | The name is the `label` in the settings file (see "Where things live"). Change it there and restart Hermes Desktop. |
-| The button reads "Codex: Unknown · Claude: Unknown" | The plugin is turned off in Hermes but its button is still on. Turn it back on with `hermes plugins enable codex-account-switch` and restart Hermes Desktop, or turn off the switch on its card under Capabilities → Plugins → Installed. |
+| The button reads "Codex: Unknown · Claude: Unknown" | The plugin is turned off in Hermes but its button is still on. Turn it back on with `hermes plugins enable account-switcher` and restart Hermes Desktop, or turn off the switch on its card under Capabilities → Plugins → Installed. |
 | "Account-switch settings are missing" | Run `setup.cmd`. |
 | "The Hermes gateway on this PC runs as the Windows service …" | The settings were written while that gateway was stopped, so setup could not see it. Run the command the message gives (`setup.cmd service <name>`), then restart Hermes Desktop. |
 | "not logged in" next to a Claude account | That account has not been signed in. Run `setup.cmd claude <its key>`. |

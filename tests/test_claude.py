@@ -266,20 +266,20 @@ PROVIDER = ops.CLAUDE_PROVIDER
 def provider_home(tmp_path, monkeypatch):
     monkeypatch.setattr(ops, 'ROOT', tmp_path)
     monkeypatch.setattr(ops, 'runtime_python', lambda: tmp_path / 'fixture-python.exe')
-    package = tmp_path / 'plugins/codex-account-switch/dashboard'
+    package = tmp_path / 'plugins/account-switcher/dashboard'
     package.mkdir(parents=True)
     (package / 'manifest.json').write_text('{}', encoding='utf-8')
     for home in (tmp_path, tmp_path / 'profiles/beta', tmp_path / 'profiles/alpha'):
         home.mkdir(parents=True, exist_ok=True)
         (home / 'config.yaml').write_text(
-            json.dumps({'plugins': {'enabled': ['codex-account-switch', PROVIDER]}}), encoding='utf-8')
+            json.dumps({'plugins': {'enabled': ['account-switcher', PROVIDER]}}), encoding='utf-8')
     (tmp_path / '.env').write_text('OTHER_KEY=keep-me\n', encoding='utf-8')
     return tmp_path
 
 
 def enable_provider(home, enabled=True, disabled=False):
     (home / 'config.yaml').write_text(json.dumps({'plugins': {
-        'enabled': ['codex-account-switch', PROVIDER] if enabled else ['codex-account-switch'],
+        'enabled': ['account-switcher', PROVIDER] if enabled else ['account-switcher'],
         'disabled': [PROVIDER] if disabled else []}}), encoding='utf-8')
 
 

@@ -118,8 +118,8 @@ def test_binding_updates_all_paths_after_late_setup(tmp_path, monkeypatch):
     monkeypatch.setenv('HERMES_SWITCH_SETTINGS', str(path))
     with ops.bound_settings():
         assert ops.ROOT == configured
-        assert ops.LOCK == configured / 'logs/codex-account-switch.lock'
-        assert ops.RECEIPT == configured / 'logs/codex-account-switch-last.json'
+        assert ops.LOCK == configured / 'logs/account-switcher.lock'
+        assert ops.RECEIPT == configured / 'logs/account-switcher-last.json'
         assert ops.EXE == tmp_path / 'Desktop.exe'
 
 

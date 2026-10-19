@@ -82,7 +82,7 @@ answer and the Desktop window closing are not guarded.
 - **Older builds refreshed the gateway's count of active work only while a drain was requested**,
   so the idle check before a switch could read an old busy count and refuse. That is the safe
   direction; it was not seen on the verified builds.
-- **Hermes logs "Failed to load plugin 'codex-account-switch': No `__init__.py`" at every start.**
+- **Hermes logs "Failed to load plugin 'account-switcher': No `__init__.py`" at every start.**
   The plugin has no Python entry point for Hermes's general loader; its backend is loaded as a
   dashboard plugin. The message is harmless.
 

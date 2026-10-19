@@ -42,9 +42,9 @@ def runtime_python():
         raise SwitchError('The active Hermes Python runtime is unavailable; switching is unsupported on this installation.') from None
 
 
-RECEIPT = ROOT / 'logs/codex-account-switch-last.json'
-LOCK = ROOT / 'logs/codex-account-switch.lock'
-NS = '/api/plugins/codex-account-switch'
+RECEIPT = ROOT / 'logs/account-switcher-last.json'
+LOCK = ROOT / 'logs/account-switcher.lock'
+NS = '/api/plugins/account-switcher'
 ENV_SET = Path(__file__).resolve().with_name('env_set.py')
 
 # Claude: the DirectSDK plugin hands the `claude` CLI this folder as CLAUDE_CONFIG_DIR, read from the process
@@ -64,8 +64,8 @@ def configure_paths(settings=None):
     settings = settings or load_settings()
     ROOT = settings.hermes_root
     EXE = settings.desktop_exe
-    RECEIPT = ROOT / 'logs/codex-account-switch-last.json'
-    LOCK = ROOT / 'logs/codex-account-switch.lock'
+    RECEIPT = ROOT / 'logs/account-switcher-last.json'
+    LOCK = ROOT / 'logs/account-switcher.lock'
     CLAUDE_AUTH = ROOT / 'claude-auth'
     return settings
 
@@ -118,7 +118,7 @@ class LocalOperationFailed(SwitchError):
 
 BEFORE_CLOSE = ('accepted', 'checking')
 AFTER_CLOSE = ('restarting', 'applying', 'reopening', 'verifying')
-PRINCIPAL = 'codex-account-switch'
+PRINCIPAL = 'account-switcher'
 
 
 def clear_own_drains():
@@ -240,7 +240,7 @@ def _effectively_enabled(flags, name):
 
 def plugin_profile_blockers():
     """Every discovered profile must opt into the installed backend before a restart."""
-    plugin = ROOT / 'plugins/codex-account-switch/dashboard/manifest.json'
+    plugin = ROOT / 'plugins/account-switcher/dashboard/manifest.json'
     if not plugin.is_file():
         return ['The Account Switcher backend package is missing from the Hermes root.']
     blockers = []
@@ -249,11 +249,11 @@ def plugin_profile_blockers():
             flags = _plugin_flags(home)
             if flags is None:
                 blockers.append(f'{home_name(home)}: Account Switcher plugin configuration is unreadable.')
-            elif not _effectively_enabled(flags, 'codex-account-switch'):
+            elif not _effectively_enabled(flags, 'account-switcher'):
                 # `hermes plugins enable` only knows a plugin that is installed in that profile's own folder.
                 flag = '' if Path(home) == ROOT else f'-p {home.name} '
                 blockers.append(f'{home_name(home)}: Account Switcher is not enabled in this profile. Install it '
-                                f'into this profile\'s folder, run "hermes {flag}plugins enable codex-account-switch", '
+                                f'into this profile\'s folder, run "hermes {flag}plugins enable account-switcher", '
                                 'then restart Hermes Desktop.')
     except UnsupportedRuntime as exc:
         return [str(exc)]
@@ -934,7 +934,7 @@ class WindowsOps:
             for home, _ in gateway_states():
                 if drain.drain_requested(home=home):
                     raise SwitchError('Another gateway maintenance operation owns the drain.')
-                drain.write_drain_request(home=home, principal='codex-account-switch', suppress_notification=True)
+                drain.write_drain_request(home=home, principal='account-switcher', suppress_notification=True)
                 self.drained.append(home)
             wait_for(lambda: gateway_states(require_drain=True), 12, 'Gateway did not acknowledge the restart safety gate.')
             if any(d['active_agents'] for _, d in gateway_states(require_drain=True)):
@@ -1164,7 +1164,7 @@ class WindowsOps:
             return
         drain = drain_control()
         for home in self.drained:
-            if (drain.read_drain_request(home=home) or {}).get('principal') == 'codex-account-switch':
+            if (drain.read_drain_request(home=home) or {}).get('principal') == 'account-switcher':
                 drain.clear_drain_request(home=home)
         self.drained.clear()
 

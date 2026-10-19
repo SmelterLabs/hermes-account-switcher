@@ -11,7 +11,7 @@ export default {
     ]
   },
   test: {
-    name: 'codex-account-switch',
+    name: 'account-switcher',
     environment: 'jsdom',
     globals: true,
     setupFiles: [path.join(here, 'test-setup.mjs')],

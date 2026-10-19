@@ -47,7 +47,7 @@ def settings_path():
         if not local:
             raise SettingsError('Set HERMES_SWITCH_SETTINGS or HERMES_HOME to locate account-switch settings.')
         home = str(Path(local) / 'hermes')
-    return Path(home) / 'plugin-data' / 'codex-account-switch' / 'settings.json'
+    return Path(home) / 'plugin-data' / 'account-switcher' / 'settings.json'
 
 
 def _absolute(value, name):

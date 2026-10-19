@@ -6,7 +6,7 @@ not been proven is in [docs/acceptance.md](docs/acceptance.md).
 
 ## What this is
 
-A Windows-only Hermes Desktop plugin (ID `codex-account-switch`, version 1.2.3)
+A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.3.0)
 that switches which Codex login and which Claude subscription account every local Hermes profile
 on the PC uses, through one idle-only, verified restart. It began as a private tool tailored to
 one machine and is packaged here for anyone. **The working behavior was preserved, not
@@ -42,7 +42,7 @@ The sanitized public release checkout is a separate Git repository under `publis
 | `docs/receipts/` | Evidence from live runs |
 
 The release is a "unified package": backend code under
-`<home>/plugins/codex-account-switch/` with the Desktop half at `desktop/plugin.js` inside it.
+`<home>/plugins/account-switcher/` with the Desktop half at `desktop/plugin.js` inside it.
 
 ## The switch transaction (safety-critical; do not weaken)
 
@@ -82,7 +82,7 @@ Invariants:
 
 ## Configuration model
 
-Settings live at `<hermes-root>/plugin-data/codex-account-switch/settings.json`, shared by every
+Settings live at `<hermes-root>/plugin-data/account-switcher/settings.json`, shared by every
 profile, overridable with `HERMES_SWITCH_SETTINGS`. Keys: `hermes_root`, `hermes_source`,
 `desktop_exe`, `gateway_service`, `codex: {key: {label, email}}`,
 `claude: {key: {label, email, directory}}`, and optionally `gateway_health_url`. No Python path
@@ -91,7 +91,10 @@ checked against the login, never inferred from a label**.
 
 ## Decisions already made
 
-1. Keep the plugin ID `codex-account-switch`.
+1. The plugin ID is `account-switcher` (1.3.0 on). Up to 1.2.3 it was `codex-account-switch`, a
+   name that said only Codex although the plugin also switches Claude. The repository stays
+   `hermes-account-switcher`: "hermes" is redundant inside Hermes but needed on GitHub.
+   `install.py` migrates an install made under the old name (`LEGACY`, `migrate_legacy`).
 2. First release: Windows only, Codex and Claude selection. No macOS or Linux, no remote
    machines, no automatic rotation, no usage dashboards, no credential manager.
 3. Preserve the working implementation; package, do not rewrite.
@@ -117,7 +120,7 @@ checked against the login, never inferred from a label**.
   between that answer and the close is open; the user guide says so.
 - **Hermes already authenticates plugin routes.** Its web server requires the session token on
   every `/api/` path outside its public list; `authorize()` only adds the loopback check.
-- **The dashboard siblings are imported as submodules of `codex_account_switch_dashboard`** when
+- **The dashboard siblings are imported as submodules of `account_switcher_dashboard`** when
   Hermes loads `plugin_api.py` by file path, never by putting `dashboard/` on the shared web
   server's `sys.path`, where `settings` and `compat` would shadow other modules. The helper
   scripts and the test suite still import the plain names. Thanks to teknium1 for the fix.
@@ -149,7 +152,7 @@ checked against the login, never inferred from a label**.
 - **A backend never calls itself over HTTP:** `/preflight` answers for its own process directly.
 - **A single-profile Desktop backend has no `--profile` argument**; discovery names it `default`.
 - **The installer keeps everything except the live plugin out of `plugins/`:** Hermes loads every
-  folder there. Rollback and staging copies live in `plugin-data/codex-account-switch/installer/`.
+  folder there. Rollback and staging copies live in `plugin-data/account-switcher/installer/`.
 - **The plugin's button ships hidden.** The user turns on the switch on the plugin's card under
   Capabilities → Plugins → Installed. `hermes plugins enable` alone does not show the button.
 - **A new Windows has no working `python`:** the command is a stub that opens the Microsoft Store.
