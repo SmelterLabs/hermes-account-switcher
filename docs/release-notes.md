@@ -1,5 +1,33 @@
 # Release notes — Hermes Account Switcher
 
+## 1.3.2
+
+Fixes a switch refused with "Gateway activity is unknown; restart refused." while nothing was
+wrong. 1.3.1 was not published on its own; this release carries it (below).
+
+- **A dead gateway's leftover record no longer blocks switching.** A gateway that was killed
+  without cleanup leaves its profile's `gateway_state.json` saying `running`. Once Windows gave that
+  process number to an unrelated program, the switcher saw a live process with an old heartbeat
+  and refused every switch. Found on the owner's PC: a record left by a profile's standalone
+  gateway two months earlier. The switcher now compares the record's `start_time` (Hermes's own
+  process-creation stamp) with the live process and ignores a record whose number now belongs to
+  something else. A record without that stamp still blocks, as before.
+
+## 1.3.1
+
+Fixes a switch that reported "complete" while the declared gateway service was left stopped.
+Found on the owner's PC on 1.3.0; 1.2.3 has the same gap.
+
+- **The switch now proves the declared Windows service serves afterwards.** On Hermes 0.22, Hermes
+  Desktop starts a gateway of its own within seconds of the service stopping. A service that does
+  not start with `--replace` then exits beside it, and 1.3.0 accepted "a new gateway answers" as
+  proof. Verification now waits up to a minute for the root gateway ledger to name a process owned
+  by that service, and fails with a message naming the service otherwise.
+- **Preflight refuses while a gateway other than the declared service is serving**, so a switch is
+  never started from that state.
+- The user guide's new "Gateway service" section says what the service needs:
+  `hermes gateway run --replace`.
+
 ## 1.3.0
 
 The plugin is renamed from `codex-account-switch` to `account-switcher`. It switches Claude

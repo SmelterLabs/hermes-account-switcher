@@ -6,7 +6,7 @@ not been proven is in [docs/acceptance.md](docs/acceptance.md).
 
 ## What this is
 
-A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.3.0)
+A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.3.1)
 that switches which Codex login and which Claude subscription account every local Hermes profile
 on the PC uses, through one idle-only, verified restart. It began as a private tool tailored to
 one machine and is packaged here for anyone. **The working behavior was preserved, not
@@ -95,6 +95,12 @@ checked against the login, never inferred from a label**.
    name that said only Codex although the plugin also switches Claude. The repository stays
    `hermes-account-switcher`: "hermes" is redundant inside Hermes but needed on GitHub.
    `install.py` migrates an install made under the old name (`LEGACY`, `migrate_legacy`).
+   On the unified runtime a declared service must be the gateway that serves after a switch
+   (`service_owns_gateway`, checked in preflight and `verify_service_owner`): Hermes Desktop's
+   `gateway ensure` does not recognize a WinSW service and starts an unmanaged gateway while the
+   service is stopped, so the service needs `gateway run --replace`. Known gap: that unmanaged
+   gateway runs during the apply window; the drain marker holds new turns and the service's
+   `--replace` start retires it.
 2. First release: Windows only, Codex and Claude selection. No macOS or Linux, no remote
    machines, no automatic rotation, no usage dashboards, no credential manager.
 3. Preserve the working implementation; package, do not rewrite.
@@ -135,6 +141,12 @@ checked against the login, never inferred from a label**.
   without draining); never trust `gateway start`'s exit code; set
   `HERMES_GATEWAY_INSTALL_START_ON_LOGIN=0` so a bare start cannot install a login task; identity
   is (pid, birth time), never pid alone.
+- **A killed gateway leaves its `gateway_state.json` saying `running`**, and Windows soon gives
+  its PID to an unrelated program. `gateway_states()` used to see "live PID, months-old heartbeat"
+  and refuse every switch with "Gateway activity is unknown" (the owner's PC, 2026-10-20: one
+  profile's record from a standalone gateway killed two months earlier). `recycled_pid()` compares the
+  record's `start_time` (Hermes's own centisecond creation-time stamp) with the live process and
+  skips a record whose PID now belongs to someone else; a record without the stamp still blocks.
 - **Gateway commands go through Hermes's launcher (`bin/hermes.exe`)**, never
   `python -m hermes_cli.main`: that form starts a gateway that exits at once.
 - **Stock Hermes serves no health address.** With `gateway_service: null`, health is the
@@ -209,7 +221,7 @@ npm ci                             # interface test dependencies
 npm test                           # interface suite
 ```
 
-Current counts: 297 backend, 34 interface. The 1.2.3 runtime support was proven on the owner's
+Current counts: 306 backend, 34 interface. The 1.2.3 runtime support was proven on the owner's
 PC with one real switch: `docs/receipts/2026-10-17-unified-runtime-owner-pc.json`. Live evidence and what is still not run:
 [docs/acceptance.md](docs/acceptance.md).
 

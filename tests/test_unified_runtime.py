@@ -13,6 +13,7 @@ from switch_core import SwitchError
 
 OLD = {'status': 'running', 'pid': 50, 'born': None}
 NEW = {'status': 'running', 'pid': 60, 'born': None}
+REAL_SERVICE_OWNS_GATEWAY = ops.service_owns_gateway
 
 
 @pytest.fixture
@@ -33,6 +34,7 @@ def hosted(tmp_path, monkeypatch):
     monkeypatch.setattr(ops, 'claude_provider_blockers', lambda: [])
     monkeypatch.setattr(ops, 'ensure_settings_unchanged', lambda: None)
     monkeypatch.setattr(ops.time, 'sleep', lambda seconds: None)
+    monkeypatch.setattr(ops, 'service_owns_gateway', lambda name: True)
     with ops.bound_settings():
         monkeypatch.setattr(ops, 'RECEIPT', tmp_path / 'receipt.json')
         yield tmp_path
@@ -119,3 +121,55 @@ def test_recovery_restarts_the_gateway_without_opening_desktop(hosted, monkeypat
     monkeypatch.setattr(worker, 'start', lambda: started.append(True))
     worker.recover({'codex': 'only'}, changed=False)
     assert started == [True]
+
+
+def owned_by(monkeypatch, owner, state='running'):
+    """The root ledger names gateway 60; `owner` is the service whose process tree holds it (None: none does)."""
+    monkeypatch.setattr(ops, 'service_owns_gateway', REAL_SERVICE_OWNS_GATEWAY)
+    ledger = ops.ROOT / 'gateway_state.json'
+    ledger.write_text(json.dumps({'pid': 60, 'gateway_state': state}), encoding='utf-8')
+    monkeypatch.setattr(ops.psutil, 'pid_exists', lambda pid: True)
+    monkeypatch.setattr(ops, 'gateway_owner', lambda pid: owner if pid == 60 else None)
+
+
+def test_service_owns_gateway_only_when_its_own_process_serves(hosted, monkeypatch):
+    monkeypatch.setattr(ops, 'service', lambda: NEW)
+    owned_by(monkeypatch, 'FixtureGateway')
+    assert ops.service_owns_gateway('FixtureGateway') is True
+    owned_by(monkeypatch, None)  # Hermes Desktop started a gateway of its own
+    assert ops.service_owns_gateway('FixtureGateway') is False
+    owned_by(monkeypatch, 'FixtureGateway', state='draining')
+    assert ops.service_owns_gateway('FixtureGateway') is False
+    owned_by(monkeypatch, 'FixtureGateway')
+    monkeypatch.setattr(ops, 'service', lambda: {'status': 'stopped', 'pid': None})
+    assert ops.service_owns_gateway('FixtureGateway') is False
+
+
+def test_verify_fails_when_a_gateway_other_than_the_service_serves(hosted, monkeypatch):
+    """Found live on 1.3.0: Desktop replaced the stopped service with its own gateway, the service could not
+    start beside it, and the switch still reported complete."""
+    monkeypatch.setattr(ops, 'service', lambda: NEW)
+    monkeypatch.setattr(ops, 'codex_stores', lambda: [])
+    monkeypatch.setattr(ops, 'common_selection', lambda stores: 'only')
+    monkeypatch.setattr(ops, 'usage', lambda account: None)
+    monkeypatch.setattr(ops, 'accounts', lambda: {'only': {}})
+    clock = iter(range(0, 10_000, 30))
+    monkeypatch.setattr(ops.time, 'monotonic', lambda: next(clock))
+    worker = ops.WindowsOps({})
+    worker.hosted = True
+    worker.old_gateway = ops.gateway_identity(OLD)
+    owned_by(monkeypatch, None)
+    with pytest.raises(SwitchError, match='not the Windows service FixtureGateway'):
+        worker.verify({'codex': 'only'})
+    owned_by(monkeypatch, 'FixtureGateway')
+    assert worker.verify({'codex': 'only'})['codex'] == 'only'
+
+
+def test_preflight_refuses_while_a_gateway_other_than_the_service_serves(hosted, monkeypatch):
+    monkeypatch.setattr(ops, 'service', lambda: NEW)
+    idle_ledger(hosted, monkeypatch)
+    owned_by(monkeypatch, None)
+    result = ops.preflight(lambda: {'blockers': []})
+    assert result['ok'] is False and any('not the Windows service' in b for b in result['blockers'])
+    owned_by(monkeypatch, 'FixtureGateway')
+    assert ops.preflight(lambda: {'blockers': []})['ok'] is True

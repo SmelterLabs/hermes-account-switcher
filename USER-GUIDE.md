@@ -34,6 +34,16 @@ You need:
 
 You can use just Codex switching, just Claude switching, or both.
 
+### Gateway service
+
+If your Hermes gateway runs as a Windows service (you told setup its name), that service must
+start the gateway with `hermes gateway run --replace`. On Hermes 0.22 and later, Hermes Desktop
+starts a gateway of its own the moment the service stops during a switch; without `--replace`
+the service then cannot take the PC back when it starts again, and stays stopped. The switch
+checks this and fails with a message naming the service rather than report success. For a WinSW
+service, the `<arguments>` line of its XML file reads `gateway run --replace`; restart the service
+after changing it. If Hermes starts its own gateway (no service), there is nothing to do.
+
 ## Step 1 — Install and set up your accounts
 
 Unpack the release ZIP, open a terminal in that folder, and run:

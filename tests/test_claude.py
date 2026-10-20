@@ -158,6 +158,7 @@ def test_desktop_relaunches_through_the_shell(monkeypatch):
 def verifying(home, monkeypatch):
     """A WindowsOps whose restart already happened; only the verification rules are real."""
     worker = ops.WindowsOps({'started_at': 100.0, 'old_desktop_pid': 1, 'old_gateway_pid': 2})
+    monkeypatch.setattr(ops, 'service_owns_gateway', lambda name: True)
     worker.old_main = SimpleNamespace(pid=1)
     worker.old_gateway = 2
     monkeypatch.setattr(worker, 'stage', lambda name: None)

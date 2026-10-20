@@ -655,6 +655,21 @@ def gateway_owner(pid):
     return None
 
 
+def service_owns_gateway(name):
+    """True only when the declared Windows service is running and the gateway that published the root ledger is
+    that service's own process. Hermes Desktop starts a gateway of its own when it finds none, so a gateway that
+    answers after a restart may be Desktop's, not the service's; a service that cannot start beside it stops."""
+    try:
+        if service()['status'] != 'running':
+            return False
+        record = json.loads((ROOT / 'gateway_state.json').read_text(encoding='utf-8-sig'))
+        pid = int(record['pid'])
+        return (record.get('gateway_state') == 'running' and psutil.pid_exists(pid)
+                and gateway_owner(pid) == name)
+    except Exception:
+        return False
+
+
 def gateway_setting_blockers():
     """Settings that name no Windows service are right only where the command-line search sees every live
     gateway. A gateway run by a service hides its command line; read as absent, a switch would restart Hermes
@@ -729,6 +744,23 @@ def gateway_command(verb, home):
         raise SwitchError(f'Hermes could not run its own gateway {verb}.') from None
 
 
+def recycled_pid(pid, recorded):
+    """True when `pid` now belongs to another program than the gateway that wrote the record.
+
+    A gateway killed without cleanup leaves its record saying "running", and Windows soon hands
+    its PID to something unrelated. Hermes stamps `start_time` as the process creation time in
+    centiseconds (its own PID-reuse guard), so a different creation time proves a dead record.
+    A record without the stamp cannot be disproved and stays in the check."""
+    if not isinstance(recorded, int) or isinstance(recorded, bool) or recorded <= 0:
+        return False
+    try:
+        return abs(round(psutil.Process(pid).create_time() * 100) - recorded) > 1
+    except psutil.NoSuchProcess:
+        return True
+    except psutil.Error:
+        return False
+
+
 def gateway_states(require_drain=False):
     states = []
     for home in profile_homes():
@@ -738,7 +770,7 @@ def gateway_states(require_drain=False):
         try:
             d = json.loads(path.read_text(encoding='utf-8-sig'))
             pid = int(d['pid'])
-            if not psutil.pid_exists(pid):
+            if not psutil.pid_exists(pid) or recycled_pid(pid, d.get('start_time')):
                 continue
             state = d.get('gateway_state')
             if state not in ('running', 'draining'):
@@ -789,6 +821,9 @@ def preflight(own_state=None):
     gateway = hosted or gateway_in_use()
     if gateway and service()['status'] != 'running':
         blockers.append('The Hermes gateway is not running.')
+    elif hosted and load_settings().gateway_service and not service_owns_gateway(load_settings().gateway_service):
+        blockers.append(f'The Hermes gateway running now is not the Windows service {load_settings().gateway_service}; '
+                        'restart that service first.')
     if hosted:
         # Desktop has no backend to ask: the gateway runs every turn and serves this route, so Hermes's
         # idle proof is this process's own. The worker, a separate process, relies on the drain below.
@@ -1115,7 +1150,19 @@ class WindowsOps:
         result = {'new_desktop_pid': new_main.pid, 'new_gateway_pid': service()['pid'], 'profiles': evidence}
         return self.verify_stores(request, result)
 
+    def verify_service_owner(self):
+        """A declared service must be the gateway serving afterwards, not merely some gateway that answers."""
+        name = load_settings().gateway_service
+        if not self.gateway or name is None:
+            return
+        wait_for(lambda: service_owns_gateway(name), 60,
+                 f'The accounts were changed, but the Hermes gateway now running is not the Windows service {name}: '
+                 f'Hermes Desktop started a gateway of its own while the service was stopped, and {name} could not '
+                 f'take it back. Make {name} start "hermes gateway run --replace" (see "Gateway service" in the '
+                 'user guide), then restart it.')
+
     def verify_stores(self, request, result):
+        self.verify_service_owner()
         codex_target = request.get('codex')
         claude_target = request.get('claude')
         if codex_target:

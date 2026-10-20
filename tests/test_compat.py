@@ -95,6 +95,33 @@ def test_gateway_ledger_requires_fresh_heartbeat(monkeypatch, tmp_path, stamp):
             ops.gateway_states()
 
 
+@pytest.mark.parametrize('birth,blocked', [(1787803187.76, True), (1792000000.0, False)])
+def test_leftover_profile_record_with_recycled_pid_is_ignored(monkeypatch, tmp_path, birth, blocked):
+    """An August record from a killed standalone gateway; Windows later reuses its PID."""
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+    import json
+    monkeypatch.setattr(ops, 'ROOT', tmp_path)
+    now = datetime.now(timezone.utc)
+    root = {'pid': 100, 'start_time': 100, 'gateway_state': 'running', 'active_agents': 0,
+            'updated_at': now.isoformat()}
+    (tmp_path / 'gateway_state.json').write_text(json.dumps(root), encoding='utf-8')
+    profile = tmp_path / 'profiles' / 'picasso'
+    profile.mkdir(parents=True)
+    (profile / 'config.yaml').write_text('{}', encoding='utf-8')
+    leftover = {'pid': 41720, 'start_time': 178780318776, 'gateway_state': 'running', 'active_agents': 0,
+                'updated_at': (now - timedelta(days=55)).isoformat()}
+    (profile / 'gateway_state.json').write_text(json.dumps(leftover), encoding='utf-8')
+    monkeypatch.setattr(ops.psutil, 'pid_exists', lambda pid: True)
+    monkeypatch.setattr(ops.psutil, 'Process',
+                        lambda pid: SimpleNamespace(create_time=lambda: 1.0 if pid == 100 else birth))
+    if blocked:
+        with pytest.raises(SwitchError, match='activity is unknown'):
+            ops.gateway_states()
+    else:
+        assert [home for home, _ in ops.gateway_states()] == [tmp_path]
+
+
 def test_missing_profile_enable_blocks_before_desktop_or_mutation(monkeypatch, tmp_path):
     monkeypatch.setattr(ops, 'ROOT', tmp_path)
     package = tmp_path / 'plugins/account-switcher/dashboard'
