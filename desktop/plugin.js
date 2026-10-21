@@ -23,7 +23,7 @@ const CLAUDE_UNSET = ''
 // A switch takes 40 to 70 seconds; past this the dialog says what to do if Hermes does not come back.
 const RESTART_HINT_AFTER_MS = 180_000
 const RESTARTING_TEXT = 'The Hermes gateway is restarting as part of the switch. Connection errors from Hermes Desktop are expected until it is back.'
-const RESTART_SLOW_TEXT = 'This is taking longer than a switch usually does (40 to 70 seconds). If Hermes does not come back, restart Hermes Desktop; the receipt at <Hermes home>\\logs\\account-switcher-last.json says how the switch ended.'
+const RESTART_SLOW_TEXT = 'The Hermes gateway has not come back after 3 minutes, longer than a switch takes. Run hermes gateway status to see its state, or restart Hermes Desktop; the receipt at <Hermes home>\\logs\\account-switcher-last.json says how the switch ended.'
 
 function isAccountKey(value, accounts) {
   return accounts.some(account => account.key === value)
@@ -380,14 +380,14 @@ function SwitchDialog({
             }, 'codex-warnings')
           : null,
         jsx(OperationNotice, { notice, onDismiss: onDismissNotice }, 'operation'),
+        // Calm while the planned restart runs; red only once it has run well past a normal switch.
         restarting
           ? jsxs('div', {
               'aria-live': 'polite',
-              className: `rounded-md border px-3 py-2 text-xs ${noticeClass('pending')}`,
-              role: 'status',
+              className: `rounded-md border px-3 py-2 text-xs ${noticeClass(restarting.slow ? 'error' : 'pending')}`,
+              role: restarting.slow ? 'alert' : 'status',
               children: [
-                jsx('div', { children: RESTARTING_TEXT }, 'text'),
-                restarting.slow ? jsx('div', { className: 'mt-1', children: RESTART_SLOW_TEXT }, 'slow') : null
+                jsx('div', { children: restarting.slow ? RESTART_SLOW_TEXT : RESTARTING_TEXT }, 'text')
               ]
             }, 'restarting')
           : null,

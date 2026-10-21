@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **A switch says when Hermes Desktop must be restarted to load an update.** Hermes Desktop runs its own
+  copy of the switch window, made when Desktop starts; a gateway restart does not refresh it. After an
+  update installed while Desktop was open, the owner kept seeing the old window and its red connection
+  errors. The switch now refuses with "Hermes Desktop is still showing the previous version of this window"
+  until Desktop is restarted, which every version of the window shows, and the installer's result says so.
+- **The planned gateway restart stays calm for 3 minutes.** After that the note turns red and names
+  `hermes gateway status` and the switch receipt. A failure the switch itself reports is red at once.
 - **All gateway checks read the gateway's status record the same way.** Three checks parsed
   `gateway_state.json` with their own rules, and the 1.3.2 dead-record fix reached only one.
 - **A live gateway is never mistaken for a dead one because of its timestamp's unit.** A record whose
