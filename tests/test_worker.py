@@ -212,6 +212,7 @@ def test_recovery_keeps_the_stage_the_failure_happened_in(monkeypatch):
     assert record['failed_during'] == 'applying'
 
 
+@pytest.mark.windows
 def test_nothing_the_plugin_starts_inherits_the_backends_interpreter_overrides(monkeypatch, tmp_path):
     # Seen on a real stock install: with the Desktop backend's PYTHONPATH inherited, importing a Hermes
     # module relaunched the worker under another interpreter and exited before the first check.
@@ -240,6 +241,7 @@ def test_changed_settings_refuse_before_worker_claim_or_switch(operation, monkey
     assert 'nothing was switched' in final['message']
 
 
+@pytest.mark.windows
 def test_the_worker_gets_one_hidden_console_that_everything_it_starts_shares(monkeypatch, tmp_path):
     # Traced on the author's PC: a windowless worker made each git call Hermes's code makes open a new console,
     # which Windows 11 showed in Windows Terminal.

@@ -147,6 +147,7 @@ def test_expired_token_refreshed_by_handshake_is_verified_strongly(home, monkeyp
     assert ops.claude_identity('anthropic')['method'] == 'token'
 
 
+@pytest.mark.windows
 def test_desktop_relaunches_through_the_shell(monkeypatch):
     launched = []
     monkeypatch.setattr(ops.subprocess, 'Popen', lambda args, **kw: launched.append(args))
