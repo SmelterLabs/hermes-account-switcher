@@ -101,3 +101,51 @@ def test_apply_reorders_every_store(hermes_home, monkeypatch):
     assert homes == {hermes_home.name, 'beta', 'alpha'}
     assert 'clyde-voice' not in homes
     assert ops.common_selection(ops.codex_stores()) == 'work'
+
+
+def test_stores_are_reordered_side_by_side_not_one_after_another(hermes_home, monkeypatch):
+    # On the owner's PC ten profiles took about a minute one after another, with the gateway down throughout,
+    # and Hermes Desktop started a gateway of its own in the gap (2026-10-21).
+    import threading
+    import time
+    lock = threading.Lock()
+    running = {'now': 0, 'most': 0}
+    order = {}
+
+    def slow_command(args, timeout=60, home=None):
+        with lock:
+            running['now'] += 1
+            running['most'] = max(running['most'], running['now'])
+            order.setdefault(Path(home).name, []).append('priority' if 'priority' in args else 'reset')
+        time.sleep(0.2)
+        with lock:
+            running['now'] -= 1
+
+    for n in range(7):
+        write_store(hermes_home / 'profiles' / f'p{n}', entries())
+    monkeypatch.setattr(ops, 'command', slow_command)
+    began = time.monotonic()
+    ops.reorder_codex_stores('work')
+    elapsed = time.monotonic() - began
+    assert len(order) == 10
+    # Within a store the order is unchanged: priority first, then reset.
+    assert all(steps == ['priority', 'reset'] for steps in order.values())
+    assert running['most'] > 1
+    assert running['most'] <= ops.CODEX_PARALLEL
+    assert elapsed < 10 * 2 * 0.2 / 2  # well under half the one-after-another time
+
+
+def test_a_failed_store_fails_the_reorder_after_the_others_finish(hermes_home, monkeypatch):
+    done = []
+
+    def command(args, timeout=60, home=None):
+        if Path(home).name == 'beta' and 'priority' in args:
+            raise ops.LocalOperationFailed('A required local Hermes operation failed.')
+        done.append((Path(home).name, 'priority' if 'priority' in args else 'reset'))
+
+    monkeypatch.setattr(ops, 'command', command)
+    with pytest.raises(ops.LocalOperationFailed):
+        ops.reorder_codex_stores('work')
+    # beta stopped before its reset; the others were not abandoned half-way.
+    assert ('beta', 'reset') not in done
+    assert (hermes_home.name, 'reset') in done and ('alpha', 'reset') in done

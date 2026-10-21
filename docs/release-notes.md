@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A Codex switch keeps the gateway down for seconds, not a minute.** Each profile's Codex login order
+  was changed one profile after another, two Hermes commands each, while the gateway was stopped. With
+  ten profiles on the owner's PC that took about a minute, long enough for Hermes Desktop to start a
+  gateway of its own, which the restarted gateway then replaced: the open chat dropped twice. The
+  profiles are now changed side by side (each profile still in the same order), and the receipt records
+  how long the step took.
 - **A switch says when Hermes Desktop must be restarted to load an update.** Hermes Desktop runs its own
   copy of the switch window, made when Desktop starts; a gateway restart does not refresh it. After an
   update installed while Desktop was open, the owner kept seeing the old window and its red connection

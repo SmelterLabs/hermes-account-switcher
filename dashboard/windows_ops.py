@@ -1,6 +1,7 @@
 """Bounded Windows operations. Never returns credential/token values to callers."""
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -969,6 +970,30 @@ def launch_desktop():
                      stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
 
 
+# Each store's two Hermes commands start a fresh Python, a few seconds each. Run one after another across ten
+# profiles they kept the gateway down for about a minute on the owner's PC (2026-10-21), long enough for Hermes
+# Desktop to start a gateway of its own that the restarted one then had to replace. Stores are separate files,
+# so they are reordered side by side; within a store the order stays priority, then reset.
+CODEX_PARALLEL = 8
+
+
+def reorder_codex_stores(target):
+    def reorder(home, acc):
+        target_id = acc[target]['entry']['id']
+        command([str(runtime_python()), '-m', 'hermes_cli.main', 'auth', 'priority', 'openai-codex', target_id, '0'], home=home)
+        command([str(runtime_python()), '-m', 'hermes_cli.main', 'auth', 'reset', 'openai-codex', target_id], home=home)
+
+    stores = codex_stores()
+    if not stores:
+        return
+    with ThreadPoolExecutor(max_workers=min(CODEX_PARALLEL, len(stores))) as pool:
+        futures = [pool.submit(reorder, home, acc) for home, acc in stores]
+        errors = [future.exception() for future in futures]
+    first = next((error for error in errors if error is not None), None)
+    if first is not None:
+        raise first
+
+
 class WindowsOps:
     def __init__(self, record):
         self.record = record
@@ -1140,14 +1165,13 @@ class WindowsOps:
             raise SwitchError('An old account consumer is still running; refusing to change credentials.')
         if request.get('codex'):
             target = request['codex']
-            for home, acc in codex_stores():
-                if not allow_changed:
-                    ensure_settings_unchanged()
-                target_id = acc[target]['entry']['id']
-                command([str(runtime_python()), '-m', 'hermes_cli.main', 'auth', 'priority', 'openai-codex', target_id, '0'], home=home)
-                if not allow_changed:
-                    ensure_settings_unchanged()
-                command([str(runtime_python()), '-m', 'hermes_cli.main', 'auth', 'reset', 'openai-codex', target_id], home=home)
+            if not allow_changed:
+                ensure_settings_unchanged()
+            began = time.monotonic()
+            reorder_codex_stores(target)
+            if not allow_changed:
+                ensure_settings_unchanged()
+            self.checkpoint('codex_applied', seconds=round(time.monotonic() - began, 1))
             if common_selection(codex_stores()) != target:
                 raise SwitchError('Saved account readback does not match the requested account in every profile.')
         if request.get('claude'):
