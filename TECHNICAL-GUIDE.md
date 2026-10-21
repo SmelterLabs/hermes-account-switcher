@@ -147,6 +147,13 @@ checked against the login, never inferred from a label**.
   profile's record from a standalone gateway killed two months earlier). `recycled_pid()` compares the
   record's `start_time` (Hermes's own centisecond creation-time stamp) with the live process and
   skips a record whose PID now belongs to someone else; a record without the stamp still blocks.
+- **One reader for `gateway_state.json`.** `compat.read_gateway_record()` parses it (absent, unreadable,
+  or a record with `fresh` = heartbeat within 120 s); `windows_ops.gateway_record()` adds `alive` (PID
+  exists and is not recycled). `gateway_states()`, `gateway_setting_blockers()`,
+  `service_owns_gateway()` and setup's `gateway_service_found()` all read through it and differ only in
+  policy. `recycled_pid()` fails closed: only a centisecond stamp that differs by more than Hermes's own
+  2 s allowance proves a recycled PID. A stamp in another unit, no stamp, or a process that cannot be
+  inspected is never proof, because ignoring a live gateway would leave it on the previous account.
 - **Gateway commands go through Hermes's launcher (`bin/hermes.exe`)**, never
   `python -m hermes_cli.main`: that form starts a gateway that exits at once.
 - **Stock Hermes serves no health address.** With `gateway_service: null`, health is the

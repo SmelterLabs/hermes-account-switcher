@@ -1,5 +1,15 @@
 # Release notes — Hermes Account Switcher
 
+## Unreleased
+
+- **All gateway checks read the gateway's status record the same way.** Three checks parsed
+  `gateway_state.json` with their own rules, and the 1.3.2 dead-record fix reached only one.
+- **A live gateway is never mistaken for a dead one because of its timestamp's unit.** A record whose
+  `start_time` is not in Hermes's centisecond scale used to be compared as if it were, so a live
+  gateway could be ignored and left on the previous account. Such a record now stays in the check.
+- **A recycled process number is recognised in every check**, including the hidden-gateway warning
+  and the check that the declared Windows service owns the gateway.
+
 ## 1.3.2
 
 Fixes a switch refused with "Gateway activity is unknown; restart refused." while nothing was
