@@ -3,9 +3,13 @@
 Nothing here replaces, wraps or rebinds anything in Hermes, and no underscore-private name is
 read. Every unavailable interface refuses switching before any process or credential changes.
 """
+from dataclasses import dataclass
+from datetime import datetime
 from importlib import import_module
 from inspect import signature
-from time import sleep
+import json
+from pathlib import Path
+from time import sleep, time
 
 
 class UnsupportedRuntime(RuntimeError):
@@ -46,6 +50,50 @@ def require_switch_interfaces():
                     raise ValueError()
     except Exception:
         raise UnsupportedRuntime('Hermes safety interfaces are unavailable or changed; account switching is disabled.') from None
+
+
+# A live gateway rewrites its record far more often than this; an older record proves nothing about now.
+GATEWAY_RECORD_FRESH_SECONDS = 120
+
+
+@dataclass(frozen=True)
+class GatewayRecord:
+    """One home's gateway_state.json as Hermes wrote it. `fresh` says whether `updated_at` is recent. `alive`
+    (whether `pid` is still the process that wrote it) is None here and set by windows_ops.gateway_record."""
+    pid: int
+    state: object
+    fresh: bool
+    data: dict
+    alive: object = None
+
+
+def read_gateway_record(home, now=time):
+    """The one reader of Hermes's gateway_state.json. None when the home has no record.
+
+    Raises ValueError when the record cannot be read as a record at all (not JSON, not an object, no
+    usable PID), or OSError when the file cannot be opened: each caller decides whether that refuses
+    or is ignored. A missing or malformed `updated_at` is a stale record, not an unreadable one."""
+    path = Path(home) / 'gateway_state.json'
+    try:
+        text = path.read_text(encoding='utf-8-sig')
+    except FileNotFoundError:
+        return None
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError('gateway record is not an object')
+    try:
+        pid = None if isinstance(data.get('pid'), bool) else int(data.get('pid'))
+    except (TypeError, ValueError):
+        pid = None
+    if pid is None or pid <= 0:
+        raise ValueError('gateway record has no PID')
+    try:
+        stamp = datetime.fromisoformat(str(data['updated_at']).replace('Z', '+00:00'))
+        fresh = (stamp.tzinfo is not None
+                 and abs(now() - stamp.timestamp()) <= GATEWAY_RECORD_FRESH_SECONDS)
+    except (KeyError, TypeError, ValueError):
+        fresh = False
+    return GatewayRecord(pid, data.get('gateway_state'), fresh, data)
 
 
 def committed_venv(source):

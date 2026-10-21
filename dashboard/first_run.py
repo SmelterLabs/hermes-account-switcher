@@ -5,7 +5,6 @@ It never signs anyone in, never changes which account is selected, never enables
 or stores a token: the only thing taken from a login is the email address of its owner.
 """
 import base64
-from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -16,8 +15,10 @@ import urllib.request
 
 if __package__:  # imported by the dashboard API inside Hermes's web server
     from .settings import SettingsError, _parse_settings, settings_path
+    from .compat import read_gateway_record
 else:  # the helper scripts and the test suite
     from settings import SettingsError, _parse_settings, settings_path
+    from compat import read_gateway_record
 
 PLUGIN = 'account-switcher'
 DESKTOP = Path('apps/desktop/release/win-unpacked/Hermes.exe')
@@ -88,14 +89,11 @@ def gateway_service_found(home, run=subprocess.run, now=time.time):
     Read from the gateway's own status record and the process tree above it. A service hides its command
     line from an ordinary process, but not who its parent is. Nothing is changed."""
     try:
-        record = json.loads((Path(home) / 'gateway_state.json').read_text(encoding='utf-8-sig'))
-        pid = int(record['pid'])
-        if record.get('gateway_state') not in ('running', 'draining'):
-            return None
+        record = read_gateway_record(home, now)
         # An old record's PID may belong to an unrelated process by now; a live gateway keeps its record fresh.
-        stamp = datetime.fromisoformat(str(record['updated_at']).replace('Z', '+00:00'))
-        if stamp.tzinfo is None or abs(now() - stamp.timestamp()) > 120:
+        if record is None or not record.fresh or record.state not in ('running', 'draining'):
             return None
+        pid = record.pid
         done = run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', SERVICE_OF.format(pid=pid)],
                    capture_output=True, text=True, timeout=40,
                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))

@@ -2,7 +2,7 @@
 import json
 import os
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from dataclasses import replace
 from pathlib import Path
 import shutil
 import subprocess
@@ -16,14 +16,14 @@ if __package__:  # imported by the dashboard API inside Hermes's web server
                               lapsed_note, selected, summaries)
     from .settings import SettingsError, load_settings, settings_snapshot, ensure_settings_unchanged
     from .compat import (UnsupportedRuntime, require_switch_interfaces, committed_venv, drain_control, safe_yaml_load,
-                         gateway_hosts_desktop)
+                         gateway_hosts_desktop, read_gateway_record)
     from .worker_launch import clean_env
 else:  # the helper scripts and the test suite, with dashboard/ on their own sys.path
     from switch_core import (CLAUDE, EMAILS, PROVIDERS, SwitchError, WrongAccount, effective, health_warning, identify, lapsed_note,
                              selected, summaries)
     from settings import SettingsError, load_settings, settings_snapshot, ensure_settings_unchanged
     from compat import (UnsupportedRuntime, require_switch_interfaces, committed_venv, drain_control, safe_yaml_load,
-                        gateway_hosts_desktop)
+                        gateway_hosts_desktop, read_gateway_record)
     from worker_launch import clean_env
 
 ROOT = Path(os.environ.get('HERMES_HOME') or Path(os.environ.get('LOCALAPPDATA', tempfile.gettempdir())) / 'hermes')
@@ -658,14 +658,14 @@ def gateway_owner(pid):
 def service_owns_gateway(name):
     """True only when the declared Windows service is running and the gateway that published the root ledger is
     that service's own process. Hermes Desktop starts a gateway of its own when it finds none, so a gateway that
-    answers after a restart may be Desktop's, not the service's; a service that cannot start beside it stops."""
+    answers after a restart may be Desktop's, not the service's; a service that cannot start beside it stops.
+    Ownership, not activity, is asked here, so an old heartbeat does not matter; a recycled PID does."""
     try:
         if service()['status'] != 'running':
             return False
-        record = json.loads((ROOT / 'gateway_state.json').read_text(encoding='utf-8-sig'))
-        pid = int(record['pid'])
-        return (record.get('gateway_state') == 'running' and psutil.pid_exists(pid)
-                and gateway_owner(pid) == name)
+        record = gateway_record(ROOT)
+        return (record is not None and record.alive and record.state == 'running'
+                and gateway_owner(record.pid) == name)
     except Exception:
         return False
 
@@ -683,16 +683,15 @@ def gateway_setting_blockers():
         return [str(exc)]
     for home in homes:
         try:
-            record = json.loads((Path(home) / 'gateway_state.json').read_text(encoding='utf-8-sig'))
-            pid = int(record['pid'])
-            stamp = datetime.fromisoformat(record['updated_at'].replace('Z', '+00:00'))
-            # An old record's PID may belong to an unrelated process by now; a live gateway keeps its record fresh.
-            fresh = stamp.tzinfo is not None and abs((datetime.now(timezone.utc) - stamp).total_seconds()) <= 120
+            record = gateway_record(home)
         except Exception:
+            # Unreadable is not a gateway here; a switch that needs the gateway refuses on it in gateway_states.
             continue
-        if not fresh or record.get('gateway_state') not in ('running', 'draining'):
+        # An old record's PID may belong to an unrelated process by now; a live gateway keeps its record fresh.
+        if record is None or not record.alive or not record.fresh or record.state not in ('running', 'draining'):
             continue
-        if pid in seen or not psutil.pid_exists(pid):
+        pid = record.pid
+        if pid in seen:
             continue
         owner = gateway_owner(pid)
         if owner:
@@ -744,48 +743,63 @@ def gateway_command(verb, home):
         raise SwitchError(f'Hermes could not run its own gateway {verb}.') from None
 
 
-def recycled_pid(pid, recorded):
-    """True when `pid` now belongs to another program than the gateway that wrote the record.
+# Hermes's own drift allowance for its start-time fingerprint (gateway/status.py): 2 s in centiseconds.
+START_TIME_TOLERANCE = 200
+# Centiseconds since the epoch for a process started between 2001 and 2286. Hermes on Windows writes this scale;
+# anything outside it (seconds, milliseconds, Linux clock ticks since boot) is a unit this check cannot compare.
+CENTISECOND_STAMPS = range(10 ** 11, 10 ** 12)
 
-    A gateway killed without cleanup leaves its record saying "running", and Windows soon hands
-    its PID to something unrelated. Hermes stamps `start_time` as the process creation time in
-    centiseconds (its own PID-reuse guard), so a different creation time proves a dead record.
-    A record without the stamp cannot be disproved and stays in the check."""
-    if not isinstance(recorded, int) or isinstance(recorded, bool) or recorded <= 0:
+
+def recycled_pid(pid, recorded):
+    """True only when there is proof that `pid` now belongs to another program than the gateway that wrote the record.
+
+    A gateway killed without cleanup leaves its record saying "running", and Windows soon hands its PID to
+    something unrelated. Hermes stamps `start_time` as the process creation time in centiseconds (its own
+    PID-reuse guard), so a different creation time on the same scale proves a dead record.
+
+    This fails closed: a record ruled recycled is ignored, and ignoring a live gateway would leave it on the
+    previous account. So a missing stamp, a stamp in another unit, or a process that cannot be inspected is
+    never proof; the record stays in the check, where an old heartbeat refuses the switch."""
+    if not isinstance(recorded, int) or isinstance(recorded, bool) or recorded not in CENTISECOND_STAMPS:
         return False
     try:
-        return abs(round(psutil.Process(pid).create_time() * 100) - recorded) > 1
+        return abs(round(psutil.Process(pid).create_time() * 100) - recorded) > START_TIME_TOLERANCE
     except psutil.NoSuchProcess:
         return True
     except psutil.Error:
         return False
 
 
+def gateway_record(home):
+    """read_gateway_record plus `alive`: the PID is still the process that wrote the record. None when the home has
+    no record; raises when it cannot be read. Every gateway_state.json read goes through here, or through
+    read_gateway_record where psutil is unavailable (first_run)."""
+    record = read_gateway_record(home)
+    if record is None:
+        return None
+    alive = psutil.pid_exists(record.pid) and not recycled_pid(record.pid, record.data.get('start_time'))
+    return replace(record, alive=alive)
+
+
 def gateway_states(require_drain=False):
     states = []
     for home in profile_homes():
-        path = home / 'gateway_state.json'
-        if not path.exists():
-            continue
         try:
-            d = json.loads(path.read_text(encoding='utf-8-sig'))
-            pid = int(d['pid'])
-            if not psutil.pid_exists(pid) or recycled_pid(pid, d.get('start_time')):
+            record = gateway_record(home)
+            if record is None or not record.alive:
                 continue
-            state = d.get('gateway_state')
-            if state not in ('running', 'draining'):
+            if record.state not in ('running', 'draining'):
                 raise ValueError()
-            active = d['active_agents']
-            if not isinstance(active, int) or active < 0:
+            active = record.data.get('active_agents')
+            if not isinstance(active, int) or isinstance(active, bool) or active < 0:
                 raise ValueError()
             # A live PID with an old ledger cannot prove idle. The drain
             # acknowledgement rechecks the refreshed count before stopping.
-            stamp = datetime.fromisoformat(d['updated_at'].replace('Z', '+00:00'))
-            if stamp.tzinfo is None or abs((datetime.now(timezone.utc) - stamp).total_seconds()) > 120:
+            if not record.fresh:
                 raise ValueError()
-            if require_drain and state != 'draining':
+            if require_drain and record.state != 'draining':
                 raise SwitchError('Gateway admission has not finished closing yet.')
-            states.append((home, d))
+            states.append((home, record.data))
         except SwitchError:
             raise
         except Exception:
