@@ -1,4 +1,5 @@
 """Account identity and restart transaction. No live IO in this module."""
+import re
 import base64
 import json
 import time
@@ -162,12 +163,17 @@ def normalize_request(body):
     return request
 
 
+def _named(provider, label):
+    # A label like "Claude - VBP" already names its provider; "Claude Claude - VBP" reads as a typo.
+    return label if re.match(rf'{provider}\b', label, re.IGNORECASE) else f'{provider} {label}'
+
+
 def describe(request):
     parts = []
     if request.get('codex'):
-        parts.append('Codex ' + CODEX_LABELS[request['codex']])
+        parts.append(_named('Codex', CODEX_LABELS[request['codex']]))
     if request.get('claude'):
-        parts.append('Claude ' + CLAUDE[request['claude']][0])
+        parts.append(_named('Claude', CLAUDE[request['claude']][0]))
     return ' and '.join(parts)
 
 

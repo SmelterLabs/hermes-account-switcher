@@ -84,6 +84,58 @@ def test_accounts_summary_never_carries_tokens(home):
     assert 'fixture-access' not in json.dumps(rows)
 
 
+def test_a_locked_or_half_written_login_reads_as_unreadable_not_signed_out(home, monkeypatch):
+    # Claude Code rewrites .credentials.json when it refreshes a token; on Windows a reader can catch it locked.
+    login('anthropic', 'first@example.invalid')
+    (ops.claude_dir('gmail')).mkdir(parents=True, exist_ok=True)
+    (ops.claude_dir('gmail') / '.credentials.json').write_text('{"claudeAiOauth": {"accessTo', encoding='utf-8')
+    monkeypatch.setattr(ops.time, 'sleep', lambda seconds: None)
+    rows = {r['key']: r for r in ops.claude_accounts()}
+    assert rows['anthropic']['logged_in'] is True and rows['anthropic']['unreadable'] is False
+    assert rows['gmail']['logged_in'] is False and rows['gmail']['unreadable'] is True
+    # No file at all is a missing login, not an unreadable one.
+    assert rows['work']['logged_in'] is False and rows['work']['unreadable'] is False
+
+
+def test_a_login_file_caught_mid_write_is_read_again_before_giving_up(home, monkeypatch):
+    login('gmail', 'second@example.invalid')
+    good = (ops.claude_dir('gmail') / '.credentials.json').read_text(encoding='utf-8')
+    real_read = Path.read_text
+    reads = []
+
+    def locked_once(self, *args, **kwargs):
+        if self.name == '.credentials.json':
+            reads.append(1)
+            if len(reads) == 1:
+                raise PermissionError('fixture: file is locked by another process')
+            return good
+        return real_read(self, *args, **kwargs)
+    monkeypatch.setattr(Path, 'read_text', locked_once)
+    monkeypatch.setattr(ops.time, 'sleep', lambda seconds: None)
+    assert ops._credentials('gmail')['accessToken'] == 'fixture-access-gmail'
+    assert len(reads) == 2
+
+
+def test_identity_says_recheck_not_sign_in_when_the_login_is_unreadable(home, monkeypatch):
+    login('gmail', 'second@example.invalid')
+    monkeypatch.setattr(ops, '_credentials', lambda key, **kw: (_ for _ in ()).throw(ops.CredentialsUnreadable(key)))
+    with pytest.raises(SwitchError) as e:
+        ops.claude_identity('gmail')
+    assert 'could not be read just now' in str(e.value) and 'recheck' in str(e.value)
+    assert 'is missing' not in str(e.value)
+
+
+def test_identity_unreadable_after_the_refresh_handshake_says_recheck(home, monkeypatch):
+    login('anthropic', 'first@example.invalid', expires_in=-10)
+    monkeypatch.setattr(ops.time, 'sleep', lambda seconds: None)
+
+    def refresh_leaves_half_a_file(key):
+        (ops.claude_dir(key) / '.credentials.json').write_text('{"claudeAi', encoding='utf-8')
+    monkeypatch.setattr(ops, '_handshake', refresh_leaves_half_a_file)
+    with pytest.raises(SwitchError, match='could not be read just now'):
+        ops.claude_identity('anthropic')
+
+
 def test_identity_uses_token_owner_not_cached_label(home, monkeypatch):
     login('gmail', 'second@example.invalid', cached='wrong-label@example.invalid')
     monkeypatch.setattr(ops, '_oauth_profile', lambda token: 'second@example.invalid')
@@ -147,6 +199,7 @@ def test_expired_token_refreshed_by_handshake_is_verified_strongly(home, monkeyp
     assert ops.claude_identity('anthropic')['method'] == 'token'
 
 
+@pytest.mark.windows
 def test_desktop_relaunches_through_the_shell(monkeypatch):
     launched = []
     monkeypatch.setattr(ops.subprocess, 'Popen', lambda args, **kw: launched.append(args))

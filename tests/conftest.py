@@ -23,3 +23,17 @@ def fixture_settings(tmp_path, monkeypatch):
     path = tmp_path / 'switch-settings.json'
     path.write_text(json.dumps(data), encoding='utf-8')
     monkeypatch.setenv('HERMES_SWITCH_SETTINGS', str(path))
+
+
+def pytest_configure(config):
+    config.addinivalue_line('markers', 'windows: needs Windows APIs or Windows path rules; skipped elsewhere')
+
+
+def pytest_collection_modifyitems(config, items):
+    import os
+    if os.name == 'nt':
+        return
+    skip = pytest.mark.skip(reason='Windows only (subprocess.STARTUPINFO, CREATE_NO_WINDOW or drive-letter paths)')
+    for item in items:
+        if 'windows' in item.keywords:
+            item.add_marker(skip)

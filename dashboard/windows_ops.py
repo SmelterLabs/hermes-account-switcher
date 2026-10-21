@@ -395,12 +395,28 @@ def claude_selection():
     return {'selected': None, 'state': 'mixed', 'stores': stores}
 
 
-def _credentials(key):
+class CredentialsUnreadable(Exception):
+    """The login file is there but cannot be read right now: locked or half-written while the CLI refreshes it."""
+
+
+def _credentials(key, attempts=3, pause=0.2):
+    """The folder's OAuth block: ``{}`` when no login file exists, ``CredentialsUnreadable`` when one exists
+    but cannot be read. Claude Code rewrites the file when it refreshes a token, and on Windows a reader can
+    hit it locked or half-written, so a few short retries come before "unreadable"."""
     path = claude_dir(key) / '.credentials.json'
-    try:
-        return (json.loads(path.read_text(encoding='utf-8')).get('claudeAiOauth') or {}) if path.is_file() else {}
-    except (OSError, ValueError):
-        return {}
+    for attempt in range(attempts):
+        if not path.is_file():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding='utf-8'))
+            if not isinstance(data, dict):
+                raise ValueError('not a JSON object')
+            oauth = data.get('claudeAiOauth') or {}
+            return oauth if isinstance(oauth, dict) else {}
+        except (OSError, ValueError):
+            if attempt + 1 < attempts:
+                time.sleep(pause)
+    raise CredentialsUnreadable(key)
 
 
 def _cached_label(key):
@@ -415,9 +431,14 @@ def claude_accounts():
     """Cheap, token-free summary for status polling."""
     rows = []
     for key, (label, email) in CLAUDE.items():
-        cred = _credentials(key)
+        try:
+            cred, unreadable = _credentials(key, attempts=2, pause=0.1), False
+        except CredentialsUnreadable:
+            cred, unreadable = {}, True
         rows.append({'key': key, 'label': label, 'email': email,
                      'logged_in': bool(cred.get('accessToken') and cred.get('refreshToken')),
+                     # True: a login file exists but was locked or mid-write; not the same as signed out.
+                     'unreadable': unreadable,
                      'cached_email': _cached_label(key) or None})
     return rows
 
@@ -468,7 +489,12 @@ def claude_identity(key):
     CLI refresh attempt. A cached folder label is never evidence of ownership.
     """
     label, expected = CLAUDE[key]
-    cred = _credentials(key)
+    busy = SwitchError(f'The {label} Claude login file could not be read just now (Claude Code may be refreshing it); '
+                       'wait a moment and recheck.')
+    try:
+        cred = _credentials(key)
+    except CredentialsUnreadable:
+        raise busy from None
     if not (cred.get('accessToken') and cred.get('refreshToken')):
         raise SwitchError(f'The {label} Claude login is missing; sign it in with "setup.cmd claude {key}".')
 
@@ -478,7 +504,10 @@ def claude_identity(key):
 
     if expired():
         _handshake(key)
-        cred = _credentials(key)
+        try:
+            cred = _credentials(key)
+        except CredentialsUnreadable:
+            raise busy from None
     if not expired():
         email = ''
         for attempt in range(2):  # One network blip must not read as an unverifiable login.
