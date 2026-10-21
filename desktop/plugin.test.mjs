@@ -527,6 +527,19 @@ describe('account-switcher desktop plugin', () => {
     expect(rest.calls.find(call => call.path === '/switch').opts.body).toEqual({ confirmed: true, codex: 'work', claude: 'gmail' })
   })
 
+  it('says nothing restarts when the backend can switch live', async () => {
+    const rest = makeRest({ preflight: [{ ...preflightFor(STATUS_PERSONAL_IDLE), desktop_restarts: false, restarts: false }] })
+    await openDialog(rest)
+    expect(screen.getByText(/Nothing restarts\. For the short moment the accounts take to change/i)).toBeTruthy()
+    expect(screen.queryByText(/The Hermes gateway will restart/i)).toBeNull()
+  })
+
+  it('keeps the restart notice when the backend does not report a live switch', async () => {
+    const rest = makeRest({ preflight: [{ ...preflightFor(STATUS_PERSONAL_IDLE), desktop_restarts: false }] })
+    await openDialog(rest)
+    expect(screen.getByText(/The Hermes gateway will restart and Hermes Desktop reconnects/i)).toBeTruthy()
+  })
+
   it('shows an accepted POST as pending, not as success', async () => {
     const rest = makeRest()
     await openDialog(rest)

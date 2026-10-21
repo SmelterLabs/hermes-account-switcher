@@ -24,6 +24,10 @@ def home(tmp_path, monkeypatch):
     (tmp_path / 'profiles' / 'beta' / '.env').write_text('export QUOTED="x"\n', encoding='utf-8')
     # env_set.py is a Hermes-venv subprocess in production; emulate its .env edit here.
     def fake_command(args, timeout=60, home=None):
+        if args[1:5] == ['-m', 'hermes_cli.main', 'config', 'set']:
+            # The provider's per-profile setting: written to the same folder as the variable (test_live_switch).
+            assert args[5] == ops.CLAUDE_SETTING
+            return
         assert args[1] == str(ops.ENV_SET) and args[2] == ops.CLAUDE_VAR
         path = Path(home) / '.env'
         lines = [l for l in (path.read_text(encoding='utf-8').splitlines() if path.exists() else [])

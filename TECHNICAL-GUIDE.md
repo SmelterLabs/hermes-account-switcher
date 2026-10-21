@@ -60,6 +60,18 @@ The release is a "unified package": backend code under
 6. **Verify**: new process ids, every reopened backend's own state, every stored order, Claude
    identity again. Only then does the receipt say `state: complete`.
 
+**Live switch (no restart; `live_switch_possible()`):** on the unified runtime, when the request has no
+Claude part or the Claude provider is 0.3.1 or later, nothing restarts. `stop()` only re-proves that every
+gateway holds new turns (drain acknowledged) and runs none; `apply()` checks that again before writing;
+`start()` releases the hold; `verify()` reads the stores back and re-checks the Claude identity. It is safe
+because the gateway re-resolves credentials every turn (`gateway/run_turn_prepare.py`,
+`_resolve_session_agent_runtime` → `load_pool`, which reads `auth.json` fresh) and its agent cache key
+hashes the full credential (`gateway/run_agent_cache.py`, `_agent_config_signature`), while the provider
+reads `plugins.entries.claude-subscription-directsdk-experimental.settings.claude_config_dir` on every
+spawn. The hold matters: Hermes's pool writer does not merge `priority` from disk, so a turn still running
+on an old copy of the pool could write the old order back on a token refresh or a rate limit. Recovery
+may write the previous choice back only while turns are still held. Receipts carry `restarts: false`.
+
 **Unified gateway runtime (Hermes v0.22 on, `compat.gateway_hosts_desktop()`):** Hermes Desktop
 starts no backend; it attaches to the gateway, which serves this plugin and runs every turn. Steps 2,
 3, 5 and 6 then touch only the gateway: the idle proof is the gateway's own (in-process), the drain
@@ -85,7 +97,9 @@ Invariants:
 Settings live at `<hermes-root>/plugin-data/account-switcher/settings.json`, shared by every
 profile, overridable with `HERMES_SWITCH_SETTINGS`. Keys: `hermes_root`, `hermes_source`,
 `desktop_exe`, `gateway_service`, `codex: {key: {label, email}}`,
-`claude: {key: {label, email, directory}}`, and optionally `gateway_health_url`. No Python path
+`claude: {key: {label, email, directory}}`, and optionally `gateway_health_url`. The Claude selection
+is written to each profile's `.env` (`CLAUDE_SUBSCRIPTION_DIRECTSDK_CONFIG_DIR`) and to the provider's
+`claude_config_dir` setting in its `config.yaml`; the setting wins when both are present, as in the provider. No Python path
 is stored: Hermes's current Python is resolved each time. Labels are display only; **identity is
 checked against the login, never inferred from a label**.
 
@@ -233,7 +247,7 @@ the interface suite on Linux, on every push to `main` and every pull request. Te
 Windows APIs or drive-letter paths carry `@pytest.mark.windows` and are skipped on other systems,
 so only the Windows job proves them.
 
-Current counts: 306 backend, 34 interface. The 1.2.3 runtime support was proven on the owner's
+Current counts: 371 backend, 46 interface. The 1.2.3 runtime support was proven on the owner's
 PC with one real switch: `docs/receipts/2026-10-17-unified-runtime-owner-pc.json`. Live evidence and what is still not run:
 [docs/acceptance.md](docs/acceptance.md).
 

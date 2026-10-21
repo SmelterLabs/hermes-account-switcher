@@ -149,6 +149,8 @@ function normalizePreflight(response) {
     blockers: Array.isArray(response?.blockers) ? response.blockers.filter(value => typeof value === 'string' && value.trim()) : [],
     // false on the unified gateway runtime: only the gateway restarts and Desktop stays open.
     desktopRestarts: response?.desktop_restarts !== false,
+    // false when the switch applies without restarting anything (unified runtime, Claude provider 0.3.1 on).
+    restarts: response?.restarts !== false,
     valid: Boolean(shape && selections.valid && Array.isArray(response.blockers) && typeof response.ok === 'boolean')
   }
 }
@@ -354,7 +356,7 @@ function SwitchDialog({
                 children: [
                   jsx('span', {
                     className: 'block',
-                    children: `This changes the Codex and Claude accounts used by ${status.scope.charAt(0).toLowerCase()}${status.scope.slice(1)}. ${preflight?.desktopRestarts === false ? 'The Hermes gateway will restart and Hermes Desktop reconnects to it by itself' : 'The Hermes gateway will restart and Hermes Desktop will close and reopen'}; saved conversations stay in place.`
+                    children: `This changes the Codex and Claude accounts used by ${status.scope.charAt(0).toLowerCase()}${status.scope.slice(1)}. ${preflight?.restarts === false ? 'Nothing restarts. For the short moment the accounts take to change, Hermes turns new messages away (send them again after), and then every chat uses the new accounts from its next message' : preflight?.desktopRestarts === false ? 'The Hermes gateway will restart and Hermes Desktop reconnects to it by itself' : 'The Hermes gateway will restart and Hermes Desktop will close and reopen'}; saved conversations stay in place.`
                   }),
                   jsx('span', { className: 'block', children: 'Remote hosts, the standalone Codex app and Claude Code itself are unaffected.' })
                 ]
@@ -424,7 +426,7 @@ function SwitchDialog({
                     ? null
                     : jsx('p', {
                         className: 'text-xs text-(--ui-text-secondary)',
-                        children: codexChanged || claudeChanged ? 'No active Hermes work blocked the restart check.' : choiceHint(current, codexTarget, claudeTarget)
+                        children: codexChanged || claudeChanged ? 'No active Hermes work blocked the switch check.' : choiceHint(current, codexTarget, claudeTarget)
                       }, 'choice-hint'),
                 jsx(Button, { disabled: localPending, onClick: onRecheck, type: 'button', variant: 'secondary', children: 'Recheck' }, 'recheck')
               ]
