@@ -155,6 +155,16 @@ def test_request_normalizes_either_or_both_providers():
     assert describe({'claude': 'anthropic'}) == 'Claude Anthropic'
 
 
+def test_a_label_that_already_names_its_provider_is_not_prefixed_twice():
+    import switch_core
+    assert switch_core._named('Claude', 'Claude - VBP') == 'Claude - VBP'
+    assert switch_core._named('Claude', 'claude work') == 'claude work'
+    assert switch_core._named('Codex', 'Codex') == 'Codex'
+    # Only the whole word counts.
+    assert switch_core._named('Claude', 'Claudette') == 'Claude Claudette'
+    assert switch_core._named('Codex', 'Personal') == 'Codex Personal'
+
+
 class Ops:
     def __init__(self, fail=None): self.events = []; self.fail = fail
     def step(self, name):

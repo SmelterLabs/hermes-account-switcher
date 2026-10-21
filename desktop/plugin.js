@@ -20,6 +20,10 @@ const DEFAULT_SCOPE = 'All Hermes profiles on this PC'
 const PENDING_STATES = new Set(['accepted', 'checking', 'restarting', 'applying', 'reopening', 'starting', 'verifying'])
 
 const CLAUDE_UNSET = ''
+// A switch takes 40 to 70 seconds; past this the dialog says what to do if Hermes does not come back.
+const RESTART_HINT_AFTER_MS = 180_000
+const RESTARTING_TEXT = 'The Hermes gateway is restarting as part of the switch. Connection errors from Hermes Desktop are expected until it is back.'
+const RESTART_SLOW_TEXT = 'This is taking longer than a switch usually does (40 to 70 seconds). If Hermes does not come back, restart Hermes Desktop; the receipt at <Hermes home>\\logs\\account-switcher-last.json says how the switch ended.'
 
 function isAccountKey(value, accounts) {
   return accounts.some(account => account.key === value)
@@ -227,7 +231,7 @@ function writeDismissed(key) {
 function choiceHint(current, codexTarget, claudeTarget) {
   const label = (accounts, key) => accounts.find(account => account.key === key)?.label
   // A label like "Claude - Work" already names its provider; "Claude Claude - Work" reads as a typo.
-  const named = (provider, text) => text.toLowerCase().startsWith(provider.toLowerCase()) ? text : `${provider} ${text}`
+  const named = (provider, text) => new RegExp(`^${provider}\\b`, 'i').test(text) ? text : `${provider} ${text}`
   const active = []
   if (current.codex.accounts.length && codexTarget === current.codex.selected && label(current.codex.accounts, codexTarget)) {
     active.push(named('Codex', label(current.codex.accounts, codexTarget)))
@@ -310,7 +314,8 @@ function AccountSelect({ id, label, value, onChange, options, disabled, help }) 
 
 function SwitchDialog({
   open, onOpenChange, status, preflight, checkState, checkError, codexTarget, claudeTarget,
-  onCodexChange, onClaudeChange, onRecheck, localPending, operationNotice: notice, onDismissNotice, switchError, onConfirm
+  onCodexChange, onClaudeChange, onRecheck, localPending, operationNotice: notice, onDismissNotice, switchError, onConfirm,
+  restarting
 }) {
   const pendingFromStatus = isPendingOperation(status.last_operation) || status.in_progress
   const pendingNotice = notice?.kind === 'pending'
@@ -375,6 +380,17 @@ function SwitchDialog({
             }, 'codex-warnings')
           : null,
         jsx(OperationNotice, { notice, onDismiss: onDismissNotice }, 'operation'),
+        restarting
+          ? jsxs('div', {
+              'aria-live': 'polite',
+              className: `rounded-md border px-3 py-2 text-xs ${noticeClass('pending')}`,
+              role: 'status',
+              children: [
+                jsx('div', { children: RESTARTING_TEXT }, 'text'),
+                restarting.slow ? jsx('div', { className: 'mt-1', children: RESTART_SLOW_TEXT }, 'slow') : null
+              ]
+            }, 'restarting')
+          : null,
         switchError
           ? jsx('div', {
               className: 'rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive',
@@ -603,6 +619,9 @@ function AccountStatusButton({ rest }) {
   // Read from the 10-second poll, whose closure is the first render's.
   const openRef = useRef(false)
   const awaitingResult = useRef(false)
+  // When this switch was first seen pending; a failed poll before that is a plain failure.
+  const pendingSince = useRef(null)
+  const [restarting, setRestarting] = useState(null)
 
   async function refreshStatus() {
     try {
@@ -610,12 +629,17 @@ function AccountStatusButton({ rest }) {
       if (disposed.current) return
       const next = normalizeStatus(response)
       setRemote(false)
+      setRestarting(null)
       setStatus(next)
       setStatusError(next.valid ? null : 'The account status response was incomplete; confirmation is disabled.')
       const notice = operationNotice(next.last_operation)
       setOperationNoticeState(current => notice || (current?.kind === 'pending' ? current : null))
-      if (notice?.kind === 'pending') awaitingResult.current = true
+      if (notice?.kind === 'pending') {
+        awaitingResult.current = true
+        pendingSince.current ??= Date.now()
+      }
       if (notice?.kind === 'success' || notice?.kind === 'error') {
+        pendingSince.current = null
         setLocalPending(false)
         setSwitchError(null)
         // A switch that finished while the dialog stayed open (the gateway restarted, Desktop did not):
@@ -628,6 +652,14 @@ function AccountStatusButton({ rest }) {
       return next
     } catch (error) {
       if (disposed.current) return
+      // Mid-switch the gateway is down on purpose, and Hermes Desktop reports that as a connection error
+      // ("Gateway ticket bootstrap failed", "runtime_exited"). Keep the last status and say what is happening.
+      if (awaitingResult.current && !(error instanceof RemoteChat)) {
+        pendingSince.current ??= Date.now()
+        setRestarting({ slow: Date.now() - pendingSince.current >= RESTART_HINT_AFTER_MS })
+        setStatusError(null)
+        return null
+      }
       setRemote(error instanceof RemoteChat)
       setStatus(EMPTY_STATUS)
       setStatusError(errorText(error, 'Unable to read account status.'))
@@ -685,6 +717,8 @@ function AccountStatusButton({ rest }) {
   async function openChecks(manual = false) {
     const next = await refreshStatus()
     if (disposed.current) return
+    // The gateway is restarting for a switch: a pre-flight now would only fail the same way.
+    if (!next && awaitingResult.current) return
     if (next?.setup_needed) await lookForAccounts()
     else await runPreflight(manual ? operationNotice(next?.last_operation) : null)
   }
@@ -751,6 +785,7 @@ function AccountStatusButton({ rest }) {
         throw new Error('The backend did not accept the account switch.')
       }
       awaitingResult.current = true
+      pendingSince.current = Date.now()
       setOperationNoticeState({
         kind: 'pending',
         message: 'Switch request accepted, but it is still pending. The Hermes gateway and Hermes Desktop may close and reopen; the switch is only done after status reports Complete.'
@@ -764,7 +799,7 @@ function AccountStatusButton({ rest }) {
   // A provider with no accounts set up is left off the badge; with nothing known yet, both read "Unknown".
   const hasCodex = status.codex.accounts.length > 0
   const hasClaude = status.claude.accounts.length > 0
-  const statusLabel = remote ? 'Account switch: this PC only' : status.setup_needed ? 'Account switch: set up' : [
+  const statusLabel = remote ? 'Account switch: this PC only' : restarting ? 'Account switch: restarting…' : status.setup_needed ? 'Account switch: set up' : [
     hasCodex || !hasClaude ? `Codex: ${codexLabel(status)}` : null,
     hasClaude || !hasCodex ? `Claude: ${claudeLabel(status)}` : null
   ].filter(Boolean).join(' · ')
@@ -805,6 +840,7 @@ function AccountStatusButton({ rest }) {
         onClaudeChange: setClaudeTarget,
         open,
         operationNotice: presentNotice(operationNoticeState, { dismissedKey, staleKey }),
+        restarting,
         onDismissNotice: key => {
           setDismissedKey(key)
           writeDismissed(key)

@@ -258,6 +258,62 @@ describe('account-switcher desktop plugin', () => {
     expect(screen.getByRole('button', { name: 'Switch completed' }).disabled).toBe(true)
   })
 
+  it('shows a calm restarting note, not Desktop\'s connection error, while the gateway restarts for a switch', async () => {
+    const desktopError = new Error("Error invoking remote method 'hermes:api': Error: Gateway ticket bootstrap failed: runtime_exited status 15")
+    let down = false
+    const base = makeRest({ status: [STATUS_PERSONAL_IDLE, STATUS_PERSONAL_IDLE, STATUS_PENDING, STATUS_VERIFIED_Work],
+      preflight: [preflightFor(STATUS_PERSONAL_IDLE), preflightFor(STATUS_VERIFIED_Work)] })
+    const rest = async (path, opts) => {
+      if (down && path === '/status') { base.calls.push({ path, opts }); throw desktopError }
+      return base(path, opts)
+    }
+    rest.calls = base.calls
+    const originalSetInterval = window.setInterval
+    const originalNow = Date.now
+    const scheduled = []
+    window.setInterval = (callback, interval) => {
+      scheduled.push({ callback, interval })
+      return originalSetInterval(callback, interval)
+    }
+    try {
+      await openDialog(rest)
+      const poll = scheduled.find(item => item.interval === 10_000)
+      fireEvent.change(screen.getByRole('combobox', { name: 'Target Codex account' }), { target: { value: 'work' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Switch account' }))
+      await waitFor(() => expect(count(rest, '/switch')).toBe(1))
+      down = true
+      poll.callback()
+      expect(await screen.findByText(/restarting as part of the switch/)).toBeTruthy()
+      expect(screen.queryByText(/ticket bootstrap/)).toBeNull()
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(screen.getByRole('button', { name: 'Pending…' }).disabled).toBe(true)
+      expect(screen.queryByText(/taking longer than a switch usually does/)).toBeNull()
+      const start = originalNow()
+      Date.now = () => start + 181_000
+      poll.callback()
+      expect(await screen.findByText(/taking longer than a switch usually does/)).toBeTruthy()
+      // Back up: the note goes and the result shows.
+      Date.now = originalNow
+      down = false
+      poll.callback()
+      poll.callback()
+      expect(await screen.findByRole('button', { name: 'Switch completed' })).toBeTruthy()
+      expect(screen.queryByText(/restarting as part of the switch/)).toBeNull()
+    } finally {
+      window.setInterval = originalSetInterval
+      Date.now = originalNow
+    }
+  })
+
+  it('still shows a status failure in red when no switch is under way', async () => {
+    const rest = makeRest({ statusFailure: new Error("Error invoking remote method 'hermes:api': Error: Gateway ticket bootstrap failed") })
+    const { statusContribution } = registerWith(rest)
+    render(statusContribution.render())
+    fireEvent.click(await screen.findByRole('button', { name: /Codex:/ }))
+    expect((await screen.findByRole('alert')).textContent).toContain('Gateway ticket bootstrap failed')
+    expect(screen.queryByText(/restarting as part of the switch/)).toBeNull()
+  })
+
   it('reads Switch completed when a switch finishes while the dialog stays open', async () => {
     // The unified gateway runtime: the gateway restarts, Desktop and this dialog stay open.
     const rest = makeRest({
