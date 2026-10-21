@@ -71,6 +71,7 @@ async function openDialog(rest) {
 
 afterEach(() => {
   cleanup()
+  window.localStorage.clear()
   delete window.hermesDesktop
   delete globalThis.__activeConnectionId
 })
@@ -192,9 +193,99 @@ describe('account-switcher desktop plugin', () => {
     expect(screen.getByRole('button', { name: 'Switch account' }).disabled).toBe(true)
   })
 
-  it('leaves an idle safety result unchanged', async () => {
+  it('says the chosen accounts are already active instead of asking for a different one', async () => {
     await openDialog(makeRest())
-    expect(screen.getByText(/Pick a different Codex or Claude account/)).toBeTruthy()
+    // Claude is unset here, so only Codex is "already active".
+    expect(screen.getByText('Codex Personal is already active. Pick a Claude account, or a different Codex account, to switch.')).toBeTruthy()
+    cleanup()
+    await openDialog(makeRest({ status: [STATUS_CLAUDE_GMAIL] }))
+    expect(screen.getByText('Codex Personal and Claude Gmail are already active. Pick a different account above to switch.')).toBeTruthy()
+    expect(screen.queryByText(/Pick a different Codex or Claude account/)).toBeNull()
+  })
+
+  it('lets the last failure be dismissed, and keeps it dismissed after the dialog is reopened', async () => {
+    const failed = { ...STATUS_FAILED, last_operation: { ...STATUS_FAILED.last_operation, operation_id: 'op-old', finished_at: 1790286035 } }
+    await openDialog(makeRest({ status: [failed] }))
+    expect(screen.getByRole('alert').textContent).toContain('Last switch attempt')
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss last switch result' }))
+    expect(screen.queryByText(/Last switch attempt/)).toBeNull()
+    cleanup()
+    await openDialog(makeRest({ status: [failed] }))
+    expect(screen.queryByText(/Last switch attempt/)).toBeNull()
+    cleanup()
+    // A newer failure is news again.
+    const newer = { ...failed, last_operation: { ...failed.last_operation, operation_id: 'op-new', message: 'A newer failure.' } }
+    await openDialog(makeRest({ status: [newer] }))
+    expect(screen.getByRole('alert').textContent).toContain('A newer failure.')
+  })
+
+  it('turns the last failure into history after a clear Recheck, but not after a blocked one', async () => {
+    const failed = { ...STATUS_FAILED, last_operation: { ...STATUS_FAILED.last_operation, operation_id: 'op-old', finished_at: 1790286035 } }
+    const blocker = 'default: gateway or scheduled work is active.'
+    const rest = makeRest({ status: [failed], preflight: [preflightFor(failed), preflightFor(failed, [blocker]), preflightFor(failed)] })
+    await openDialog(rest)
+    // Opening the dialog alone does not hide what went wrong.
+    expect(screen.getByText(/Last switch attempt/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Recheck' }))
+    await waitFor(() => expect(count(rest, '/preflight')).toBe(2))
+    await screen.findByText(blocker)
+    expect(screen.getByText(/Last switch attempt/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Recheck' }))
+    await waitFor(() => expect(count(rest, '/preflight')).toBe(3))
+    await waitFor(() => expect(screen.queryByText(/Last switch attempt/)).toBeNull())
+    const note = screen.getByText(/Earlier switch attempt/)
+    expect(note.closest('[role]').getAttribute('role')).toBe('status')
+    expect(note.textContent).toContain('The account switch failed. A recheck since then found nothing blocking a new switch.')
+  })
+
+  it('marks a Claude login that could not be read right now apart from one that is signed out', async () => {
+    const accounts = [
+      { key: 'one', label: 'One', email: 'one@example.invalid', logged_in: true },
+      { key: 'two', label: 'Two', email: 'two@example.invalid', logged_in: false, unreadable: true },
+      { key: 'three', label: 'Three', email: 'three@example.invalid', logged_in: false }
+    ]
+    await openDialog(makeRest({ status: [{ ...STATUS_PERSONAL_IDLE, claude: { selected: 'one', state: 'set', accounts } }] }))
+    expect(screen.getByRole('option', { name: 'Two — two@example.invalid (login file busy, press Recheck)' }).disabled).toBe(true)
+    expect(screen.getByRole('option', { name: 'Three — three@example.invalid (not logged in)' }).disabled).toBe(true)
+  })
+
+  it('reads Switch completed after a finished switch, and Switch account again once a dropdown changes', async () => {
+    await openDialog(makeRest({ status: [STATUS_VERIFIED_Work] }))
+    expect(screen.getByRole('button', { name: 'Switch completed' }).disabled).toBe(true)
+    fireEvent.change(screen.getByRole('combobox', { name: 'Target Codex account' }), { target: { value: 'personal' } })
+    expect(screen.getByRole('button', { name: 'Switch account' }).disabled).toBe(false)
+    fireEvent.change(screen.getByRole('combobox', { name: 'Target Codex account' }), { target: { value: 'work' } })
+    expect(screen.getByRole('button', { name: 'Switch completed' }).disabled).toBe(true)
+  })
+
+  it('reads Switch completed when a switch finishes while the dialog stays open', async () => {
+    // The unified gateway runtime: the gateway restarts, Desktop and this dialog stay open.
+    const rest = makeRest({
+      status: [STATUS_PERSONAL_IDLE, STATUS_PERSONAL_IDLE, STATUS_PENDING, STATUS_VERIFIED_Work],
+      preflight: [preflightFor(STATUS_PERSONAL_IDLE), preflightFor(STATUS_VERIFIED_Work)]
+    })
+    const originalSetInterval = window.setInterval
+    const scheduled = []
+    window.setInterval = (callback, interval) => {
+      scheduled.push({ callback, interval })
+      return originalSetInterval(callback, interval)
+    }
+    try {
+      await openDialog(rest)
+      const poll = scheduled.find(item => item.interval === 10_000)
+      fireEvent.change(screen.getByRole('combobox', { name: 'Target Codex account' }), { target: { value: 'work' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Switch account' }))
+      await waitFor(() => expect(count(rest, '/switch')).toBe(1))
+      poll.callback()
+      expect(await screen.findByRole('button', { name: 'Pending…' })).toBeTruthy()
+      poll.callback()
+      await waitFor(() => expect(count(rest, '/preflight')).toBe(2))
+      const done = await screen.findByRole('button', { name: 'Switch completed' })
+      expect(done.disabled).toBe(true)
+      expect(count(rest, '/switch')).toBe(1)
+    } finally {
+      window.setInterval = originalSetInterval
+    }
   })
 
   it('loads with the SDK stub, registers a status button, and polls only the cheap status route', async () => {

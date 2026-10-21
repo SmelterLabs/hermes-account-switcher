@@ -81,7 +81,9 @@ function backendSentence(text) {
 function readAccounts(accounts) {
   return Array.isArray(accounts) ? accounts.filter(row => row && typeof row.key === 'string' &&
     plainString(row.label) && plainString(row.email)).map(row => ({
-    key: row.key, label: row.label, email: row.email, logged_in: row.logged_in === true
+    key: row.key, label: row.label, email: row.email, logged_in: row.logged_in === true,
+    // A login file that exists but was locked or mid-write (Claude Code refreshing its token). Older backends omit it.
+    unreadable: row.unreadable === true
   })) : []
 }
 
@@ -91,6 +93,7 @@ function normalizeLastOperation(operation) {
   }
   const timestamp = operation.finished_at || operation.started_at
   return { state: plainString(operation.state) || '', message: plainString(operation.message),
+    id: plainString(operation.operation_id),
     timestamp: typeof timestamp === 'number' && Number.isFinite(timestamp) && timestamp > 0 && timestamp < 8640000000000 ? timestamp : null }
 }
 
@@ -163,17 +166,23 @@ function isPendingOperation(operation) {
   return Boolean(operation && PENDING_STATES.has(operation.state))
 }
 
+// Which finished operation a notice describes, so a dismissal or a recheck applies to that one only.
+function operationKey(operation) {
+  return operation.id || `${operation.state}|${operation.timestamp ?? ''}|${operation.message ?? ''}`
+}
+
 function operationNotice(operation) {
   if (!operation) return null
   if (operation.state === 'complete' || operation.state === 'verified') {
-    return { kind: 'success', message: operation.message || 'Account switch complete.' }
+    return { kind: 'success', key: operationKey(operation), message: operation.message || 'Account switch complete.' }
   }
   if (operation.state === 'failed') {
     // The reader's own language and time zone, never the author's.
     const when = operation.timestamp ? new Date(operation.timestamp * 1000).toLocaleString(undefined, {
       month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
     }) : 'time unavailable'
-    return { kind: 'error', message: `Last switch attempt (${when}): ${operation.message || 'The account switch failed.'}` }
+    const detail = operation.message || 'The account switch failed.'
+    return { kind: 'error', key: operationKey(operation), when, detail, message: `Last switch attempt (${when}): ${detail}` }
   }
   const message = operation.message || 'Account switch is still pending.'
   return {
@@ -182,19 +191,82 @@ function operationNotice(operation) {
   }
 }
 
+// What the dialog shows for a finished operation, after the reader dismissed it or rechecked since.
+// A failure is history once a recheck the reader asked for came back clear: it stays readable, but no longer
+// as a red alert about the present.
+function presentNotice(notice, { dismissedKey, staleKey }) {
+  if (!notice || notice.kind === 'pending') return notice
+  if (notice.key && notice.key === dismissedKey) return null
+  if (notice.kind === 'error' && notice.key && notice.key === staleKey) {
+    return { ...notice, kind: 'stale',
+      message: `Earlier switch attempt (${notice.when}) failed: ${notice.detail} A recheck since then found nothing blocking a new switch.` }
+  }
+  return notice
+}
+
+const DISMISSED_STORAGE_KEY = `${ID}:dismissed-operation`
+
+function readDismissed() {
+  try {
+    return plainString(window.localStorage?.getItem(DISMISSED_STORAGE_KEY))
+  } catch {
+    return null
+  }
+}
+
+function writeDismissed(key) {
+  try {
+    window.localStorage?.setItem(DISMISSED_STORAGE_KEY, key)
+  } catch {
+    // No storage here: the dismissal lasts until Hermes Desktop restarts.
+  }
+}
+
+// Shown under the selectors when no switch is possible yet. When the targets are the accounts already in use,
+// say so: "pick a different account" read as if something were wrong.
+function choiceHint(current, codexTarget, claudeTarget) {
+  const label = (accounts, key) => accounts.find(account => account.key === key)?.label
+  // A label like "Claude - Work" already names its provider; "Claude Claude - Work" reads as a typo.
+  const named = (provider, text) => text.toLowerCase().startsWith(provider.toLowerCase()) ? text : `${provider} ${text}`
+  const active = []
+  if (current.codex.accounts.length && codexTarget === current.codex.selected && label(current.codex.accounts, codexTarget)) {
+    active.push(named('Codex', label(current.codex.accounts, codexTarget)))
+  }
+  const claudeAccounts = current.claude.accounts
+  if (claudeAccounts.length && current.claude.state === 'set' && claudeTarget === current.claude.selected && label(claudeAccounts, claudeTarget)) {
+    active.push(named('Claude', label(claudeAccounts, claudeTarget)))
+  }
+  const claudeOpen = claudeAccounts.length > 0 && current.claude.state !== 'set'
+  if (!active.length) return 'Pick a different Codex or Claude account to enable the switch.'
+  const what = active.length === 2 ? `${active[0]} and ${active[1]} are` : `${active[0]} is`
+  return `${what} already active. ${claudeOpen ? 'Pick a Claude account, or a different Codex account, to switch.' : 'Pick a different account above to switch.'}`
+}
+
 function noticeClass(kind) {
   if (kind === 'error') return 'border-destructive/30 bg-destructive/10 text-destructive'
   if (kind === 'success') return 'border-(--ui-accent) bg-(--ui-bg-quaternary) text-(--ui-text-primary)'
   return 'border-(--ui-stroke-secondary) bg-(--ui-bg-quaternary) text-(--ui-text-secondary)'
 }
 
-function OperationNotice({ notice }) {
+function OperationNotice({ notice, onDismiss }) {
   if (!notice) return null
-  return jsx('div', {
+  const dismissible = notice.kind !== 'pending' && notice.key && onDismiss
+  return jsxs('div', {
     'aria-live': 'polite',
-    className: `rounded-md border px-3 py-2 text-xs ${noticeClass(notice.kind)}`,
+    className: `flex items-start gap-2 rounded-md border px-3 py-2 text-xs ${noticeClass(notice.kind)}`,
     role: notice.kind === 'error' ? 'alert' : 'status',
-    children: notice.message
+    children: [
+      jsx('span', { className: 'flex-1', children: notice.message }, 'message'),
+      dismissible
+        ? jsx('button', {
+            'aria-label': 'Dismiss last switch result',
+            className: 'shrink-0 rounded px-1 leading-4 opacity-70 hover:opacity-100',
+            onClick: () => onDismiss(notice.key),
+            type: 'button',
+            children: '×'
+          }, 'dismiss')
+        : null
+    ]
   })
 }
 
@@ -238,7 +310,7 @@ function AccountSelect({ id, label, value, onChange, options, disabled, help }) 
 
 function SwitchDialog({
   open, onOpenChange, status, preflight, checkState, checkError, codexTarget, claudeTarget,
-  onCodexChange, onClaudeChange, onRecheck, localPending, operationNotice: notice, switchError, onConfirm
+  onCodexChange, onClaudeChange, onRecheck, localPending, operationNotice: notice, onDismissNotice, switchError, onConfirm
 }) {
   const pendingFromStatus = isPendingOperation(status.last_operation) || status.in_progress
   const pendingNotice = notice?.kind === 'pending'
@@ -248,13 +320,16 @@ function SwitchDialog({
   const codexChanged = isAccountKey(codexTarget, current.codex.accounts) && codexTarget !== current.codex.selected
   const claudeChanged = isAccountKey(claudeTarget, current.claude.accounts) && claudeTarget !== current.claude.selected
   const canConfirm = checkState === 'ready' && !checkError && !busy && (codexChanged || claudeChanged)
+  // The last switch finished and the dropdowns still show what it switched to: say so on the button.
+  // Changing either dropdown makes it a new switch again.
+  const completed = notice?.kind === 'success' && !codexChanged && !claudeChanged
   const codexOptions = current.codex.accounts.map(account => ({ value: account.key, text: `${account.label} — ${account.email}` }))
   const claudeOptions = [
     ...(current.claude.state === 'set' ? [] : [{ value: CLAUDE_UNSET, text: current.claude.state === 'mixed' ? 'Mixed — profiles disagree' : 'Unset — Claude Code’s own login', disabled: true }]),
     ...current.claude.accounts.map(account => ({
       value: account.key,
       disabled: !account.logged_in,
-      text: `${account.label} — ${account.email}${account.logged_in ? '' : ' (not logged in)'}`
+      text: `${account.label} — ${account.email}${account.logged_in ? '' : account.unreadable ? ' (login file busy, press Recheck)' : ' (not logged in)'}`
     }))
   ]
   const selectorsDisabled = localPending || pendingNotice || pendingFromStatus
@@ -299,7 +374,7 @@ function SwitchDialog({
               ]
             }, 'codex-warnings')
           : null,
-        jsx(OperationNotice, { notice }, 'operation'),
+        jsx(OperationNotice, { notice, onDismiss: onDismissNotice }, 'operation'),
         switchError
           ? jsx('div', {
               className: 'rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive',
@@ -333,7 +408,7 @@ function SwitchDialog({
                     ? null
                     : jsx('p', {
                         className: 'text-xs text-(--ui-text-secondary)',
-                        children: codexChanged || claudeChanged ? 'No active Hermes work blocked the restart check.' : 'Pick a different Codex or Claude account to enable the switch.'
+                        children: codexChanged || claudeChanged ? 'No active Hermes work blocked the restart check.' : choiceHint(current, codexTarget, claudeTarget)
                       }, 'choice-hint'),
                 jsx(Button, { disabled: localPending, onClick: onRecheck, type: 'button', variant: 'secondary', children: 'Recheck' }, 'recheck')
               ]
@@ -346,7 +421,7 @@ function SwitchDialog({
               disabled: !canConfirm,
               onClick: onConfirm,
               type: 'button',
-              children: localPending || pendingNotice || pendingFromStatus ? 'Pending…' : 'Switch account'
+              children: localPending || pendingNotice || pendingFromStatus ? 'Pending…' : completed ? 'Switch completed' : 'Switch account'
             }, 'switch')
           ]
         }, 'footer')
@@ -522,7 +597,12 @@ function AccountStatusButton({ rest }) {
   const [names, setNames] = useState({})
   const [saving, setSaving] = useState(false)
   const [agentText, setAgentText] = useState(null)
+  const [dismissedKey, setDismissedKey] = useState(readDismissed)
+  const [staleKey, setStaleKey] = useState(null)
   const disposed = useRef(false)
+  // Read from the 10-second poll, whose closure is the first render's.
+  const openRef = useRef(false)
+  const awaitingResult = useRef(false)
 
   async function refreshStatus() {
     try {
@@ -534,9 +614,16 @@ function AccountStatusButton({ rest }) {
       setStatusError(next.valid ? null : 'The account status response was incomplete; confirmation is disabled.')
       const notice = operationNotice(next.last_operation)
       setOperationNoticeState(current => notice || (current?.kind === 'pending' ? current : null))
+      if (notice?.kind === 'pending') awaitingResult.current = true
       if (notice?.kind === 'success' || notice?.kind === 'error') {
         setLocalPending(false)
         setSwitchError(null)
+        // A switch that finished while the dialog stayed open (the gateway restarted, Desktop did not):
+        // the pre-flight taken before it names the old accounts, so take a fresh one.
+        if (awaitingResult.current) {
+          awaitingResult.current = false
+          if (openRef.current && !next.setup_needed) void runPreflight()
+        }
       }
       return next
     } catch (error) {
@@ -594,14 +681,15 @@ function AccountStatusButton({ rest }) {
     if (!disposed.current) setAgentText(text)
   }
 
-  async function openChecks() {
+  // manual: the reader pressed Recheck. A clear result then turns the failure shown at that moment into history.
+  async function openChecks(manual = false) {
     const next = await refreshStatus()
     if (disposed.current) return
     if (next?.setup_needed) await lookForAccounts()
-    else await runPreflight()
+    else await runPreflight(manual ? operationNotice(next?.last_operation) : null)
   }
 
-  async function runPreflight() {
+  async function runPreflight(shownNotice = null) {
     setCheckState('checking')
     setCheckError(null)
     try {
@@ -621,6 +709,7 @@ function AccountStatusButton({ rest }) {
       setCodexTarget(next.codex.selected || next.codex.accounts[0]?.key || '')
       setClaudeTarget(next.claude.state === 'set' && next.claude.selected ? next.claude.selected : CLAUDE_UNSET)
       setCheckState('ready')
+      if (shownNotice?.kind === 'error' && next.blockers.length === 0) setStaleKey(shownNotice.key)
     } catch (error) {
       if (disposed.current) return
       setPreflight(null)
@@ -640,6 +729,7 @@ function AccountStatusButton({ rest }) {
   }, [rest])
 
   useEffect(() => {
+    openRef.current = open
     if (open) void openChecks()
   }, [open])
 
@@ -660,6 +750,7 @@ function AccountStatusButton({ rest }) {
       if (response?.accepted !== true || !plainString(response?.operation_id)) {
         throw new Error('The backend did not accept the account switch.')
       }
+      awaitingResult.current = true
       setOperationNoticeState({
         kind: 'pending',
         message: 'Switch request accepted, but it is still pending. The Hermes gateway and Hermes Desktop may close and reopen; the switch is only done after status reports Complete.'
@@ -709,11 +800,15 @@ function AccountStatusButton({ rest }) {
       }) : jsx(SwitchDialog, {
         onConfirm: () => void submitSwitch(),
         onOpenChange: setOpen,
-        onRecheck: () => void openChecks(),
+        onRecheck: () => void openChecks(true),
         onCodexChange: setCodexTarget,
         onClaudeChange: setClaudeTarget,
         open,
-        operationNotice: operationNoticeState,
+        operationNotice: presentNotice(operationNoticeState, { dismissedKey, staleKey }),
+        onDismissNotice: key => {
+          setDismissedKey(key)
+          writeDismissed(key)
+        },
         status,
         preflight,
         checkState,
