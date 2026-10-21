@@ -68,6 +68,7 @@ def test_nothing_is_written_without_a_yes(home):
     assert 'Only one Codex account is signed in' in text
 
 
+@pytest.mark.windows
 def test_a_later_run_adds_a_new_account_and_keeps_what_the_user_named(home):
     sign_in(home, ('personal', 'personal@example.invalid', 'account-one'))
     assert run(home, '--yes')[0] == 0
@@ -92,6 +93,7 @@ def test_a_later_run_adds_a_new_account_and_keeps_what_the_user_named(home):
     assert code == 0 and 'Nothing to change.' in text and settings_file(home).read_bytes() == before
 
 
+@pytest.mark.windows
 def test_the_example_file_is_one_the_plugin_accepts_for_a_stock_install():
     # The example used to pair "no Windows service" with a health address stock Hermes does not serve,
     # which would have failed every switch at the health check.
