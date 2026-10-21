@@ -73,6 +73,8 @@ def test_install_copies_release_files_and_stays_disabled(tmp_path):
         assert (target / rel).read_bytes() == (src / rel).read_bytes()
     receipt = json.loads(proc.stdout)
     assert receipt["action"] == "install"
+    # Hermes Desktop runs its own copy of the dialog until it restarts; whoever ran this must hear it.
+    assert "Close Hermes Desktop completely and open it again" in receipt["next_step"]
     # Stays disabled: no profile enablement, no account dirs, no credential writes.
     assert not (home / "desktop-plugins").exists()
     assert not (home / "claude-auth").exists()

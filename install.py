@@ -16,6 +16,8 @@ PLUGIN = 'account-switcher'
 LEGACY = 'codex-account-switch'
 OWNERSHIP = '.install-ownership.json'
 SOURCE = Path(__file__).resolve().parent
+RESTART_DESKTOP = ('Close Hermes Desktop completely and open it again. Until then it keeps showing the previous '
+                   'version of the account switch window, even after a switch restarts the gateway.')
 
 
 def safe_path(path):
@@ -177,6 +179,9 @@ def install_plugin(source, home):
             shutil.rmtree(previous_backup)
         return {'action': 'install', 'path': str(target), 'files': len(hashes),
                 'migrated': migrate_legacy(home, target),
+                # Hermes Desktop runs its own copy of desktop/plugin.js, taken when Desktop starts; a gateway
+                # restart does not refresh it. Whoever runs the installer is told, so the person is too.
+                'next_step': RESTART_DESKTOP,
                 'account_changed': False, 'profiles_enabled': [], 'processes_restarted': False}
 
 

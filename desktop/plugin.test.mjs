@@ -287,11 +287,22 @@ describe('account-switcher desktop plugin', () => {
       expect(screen.queryByText(/ticket bootstrap/)).toBeNull()
       expect(screen.queryByRole('alert')).toBeNull()
       expect(screen.getByRole('button', { name: 'Pending…' }).disabled).toBe(true)
-      expect(screen.queryByText(/taking longer than a switch usually does/)).toBeNull()
+      expect(screen.queryByText(/has not come back after 3 minutes/)).toBeNull()
+      // Two and a half minutes in (Casey's Codex switch took 80 seconds): still calm.
       const start = originalNow()
+      Date.now = () => start + 150_000
+      const before = count(rest, '/status')
+      poll.callback()
+      await waitFor(() => expect(count(rest, '/status')).toBe(before + 1))
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(screen.getByText(/restarting as part of the switch/)).toBeTruthy()
+      // Past three minutes: red, with the recovery hint.
       Date.now = () => start + 181_000
       poll.callback()
-      expect(await screen.findByText(/taking longer than a switch usually does/)).toBeTruthy()
+      const slow = await screen.findByRole('alert')
+      expect(slow.textContent).toContain('has not come back after 3 minutes')
+      expect(slow.textContent).toContain('hermes gateway status')
+      expect(screen.queryByText(/ticket bootstrap/)).toBeNull()
       // Back up: the note goes and the result shows.
       Date.now = originalNow
       down = false
@@ -303,6 +314,87 @@ describe('account-switcher desktop plugin', () => {
       window.setInterval = originalSetInterval
       Date.now = originalNow
     }
+  })
+
+  // What Casey saw on 2026-10-21: the backend's own "Checking active work before restarting…" was the last
+  // answer, then Hermes Desktop's runtime_exited error replaced it while the gateway was down.
+  it('stays calm when the status already said a switch was pending before the gateway went down', async () => {
+    const runtimeExited = new Error('Gateway inaccessible (runtime_exited). the gateway exited with status 15 before it could serve:. Use hermes gateway status for recovery.')
+    const checking = { ...STATUS_PENDING, last_operation: { state: 'checking', message: 'Checking active work before restarting for Codex Work.' } }
+    let down = false
+    const base = makeRest({ status: [checking, checking, STATUS_VERIFIED_Work], preflight: [preflightFor(STATUS_VERIFIED_Work)] })
+    const rest = async (path, opts) => {
+      if (down && path === '/status') { base.calls.push({ path, opts }); throw runtimeExited }
+      return base(path, opts)
+    }
+    rest.calls = base.calls
+    const originalSetInterval = window.setInterval
+    const scheduled = []
+    window.setInterval = (callback, interval) => {
+      scheduled.push({ callback, interval })
+      return originalSetInterval(callback, interval)
+    }
+    try {
+      const { statusContribution } = registerWith(rest)
+      render(statusContribution.render())
+      fireEvent.click(await screen.findByRole('button', { name: /Codex:/ }))
+      await screen.findByRole('dialog')
+      expect(await screen.findByText(/Checking active work before restarting/)).toBeTruthy()
+      const poll = scheduled.find(item => item.interval === 10_000)
+      down = true
+      poll.callback()
+      expect(await screen.findByText(/restarting as part of the switch/)).toBeTruthy()
+      expect(screen.queryByText(/runtime_exited/)).toBeNull()
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(screen.getByRole('button', { name: /Account switch: restarting/ })).toBeTruthy()
+    } finally {
+      window.setInterval = originalSetInterval
+    }
+  })
+
+  it('shows red when the switch itself reports a failure after the restart', async () => {
+    const desktopError = new Error('Gateway ticket bootstrap failed')
+    const failed = { ...STATUS_PERSONAL_IDLE, last_operation: { state: 'failed', message: 'The restarted Hermes gateway failed its health check.', operation_id: 'op-pending', finished_at: 1792626138 } }
+    let down = false
+    const base = makeRest({ status: [STATUS_PERSONAL_IDLE, STATUS_PERSONAL_IDLE, STATUS_PENDING, failed],
+      preflight: [preflightFor(STATUS_PERSONAL_IDLE), preflightFor(STATUS_PERSONAL_IDLE)] })
+    const rest = async (path, opts) => {
+      if (down && path === '/status') { base.calls.push({ path, opts }); throw desktopError }
+      return base(path, opts)
+    }
+    rest.calls = base.calls
+    const originalSetInterval = window.setInterval
+    const scheduled = []
+    window.setInterval = (callback, interval) => {
+      scheduled.push({ callback, interval })
+      return originalSetInterval(callback, interval)
+    }
+    try {
+      await openDialog(rest)
+      const poll = scheduled.find(item => item.interval === 10_000)
+      fireEvent.change(screen.getByRole('combobox', { name: 'Target Codex account' }), { target: { value: 'work' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Switch account' }))
+      await waitFor(() => expect(count(rest, '/switch')).toBe(1))
+      poll.callback()
+      expect(await screen.findByRole('button', { name: 'Pending…' })).toBeTruthy()
+      down = true
+      poll.callback()
+      expect(await screen.findByText(/restarting as part of the switch/)).toBeTruthy()
+      down = false
+      poll.callback()
+      const alert = await screen.findByRole('alert')
+      expect(alert.textContent).toContain('failed its health check')
+      expect(screen.queryByText(/restarting as part of the switch/)).toBeNull()
+    } finally {
+      window.setInterval = originalSetInterval
+    }
+  })
+
+  it('shows a switch blocker that says Hermes Desktop must restart to load an update', async () => {
+    const stale = 'Hermes Desktop is still showing the previous version of this window. Close Hermes Desktop completely and open it again, then switch.'
+    await openDialog(makeRest({ preflight: [preflightFor(STATUS_PERSONAL_IDLE, [stale])] }))
+    expect((await screen.findByRole('alert')).textContent).toContain('Close Hermes Desktop completely')
+    expect(screen.getByRole('button', { name: 'Switch account' }).disabled).toBe(true)
   })
 
   it('still shows a status failure in red when no switch is under way', async () => {

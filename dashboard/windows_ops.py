@@ -238,6 +238,39 @@ def _effectively_enabled(flags, name):
     return name in enabled and name not in disabled
 
 
+# Hermes Desktop does not run desktop/plugin.js from here: it copies it into <home>/desktop-plugins/ when
+# Desktop starts, and records the source's modified time beside the copy. An install or update while Desktop
+# is open leaves Desktop showing the previous dialog until Desktop is restarted; a gateway restart does not
+# refresh it. Seen on the owner's PC on 2026-10-21.
+STALE_DESKTOP_TEXT = ('Hermes Desktop is still showing the previous version of this window. Close Hermes Desktop '
+                      'completely and open it again, then switch.')
+PACKAGE_DIR = Path(__file__).resolve().parent.parent / 'desktop'
+
+
+def stale_desktop_blockers(root=None, source=None):
+    """A blocker when Desktop's own copy of this plugin's dialog is older than the installed one.
+
+    Says so only on proof: Desktop's package record names this install as its source, the copy differs from
+    the installed file, and the record's time is older than the installed file. Anything missing or
+    unreadable is not proof, so a Desktop that stores its copy differently never blocks a switch."""
+    root = Path(root or ROOT)
+    source = Path(source or PACKAGE_DIR)
+    mirror = root / 'desktop-plugins' / 'account-switcher'
+    try:
+        record = json.loads((mirror / '.hermes-package.json').read_text(encoding='utf-8-sig'))
+        if Path(record['source']).resolve() != source.resolve():
+            return []
+        recorded = float(record['sourceMtimeMs'])
+        installed = source / 'plugin.js'
+        if (mirror / 'plugin.js').read_bytes() == installed.read_bytes():
+            return []
+        newest = min(source.stat().st_mtime, installed.stat().st_mtime) * 1000
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    # Two seconds of slack for file systems that round modified times.
+    return [STALE_DESKTOP_TEXT] if recorded + 2000 < newest else []
+
+
 def plugin_profile_blockers():
     """Every discovered profile must opt into the installed backend before a restart."""
     plugin = ROOT / 'plugins/account-switcher/dashboard/manifest.json'
@@ -856,7 +889,7 @@ def preflight(own_state=None):
     """Full idle check. `own_state` is this process's own `/local-state` answer, given by a Desktop backend
     so it never has to call itself over HTTP; the switch worker, a separate process, leaves it out."""
     summary = selection_summary()
-    blockers = list(dict.fromkeys(plugin_profile_blockers() + claude_provider_blockers()
+    blockers = list(dict.fromkeys(stale_desktop_blockers() + plugin_profile_blockers() + claude_provider_blockers()
                                   + gateway_setting_blockers()))
     if blockers:
         return {'ok': False, 'blockers': blockers, **summary}
