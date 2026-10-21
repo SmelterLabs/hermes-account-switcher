@@ -221,6 +221,11 @@ npm ci                             # interface test dependencies
 npm test                           # interface suite
 ```
 
+GitHub Actions (`.github/workflows/tests.yml`) runs the backend suites on Windows and Linux and
+the interface suite on Linux, on every push to `main` and every pull request. Tests that need
+Windows APIs or drive-letter paths carry `@pytest.mark.windows` and are skipped on other systems,
+so only the Windows job proves them.
+
 Current counts: 306 backend, 34 interface. The 1.2.3 runtime support was proven on the owner's
 PC with one real switch: `docs/receipts/2026-10-17-unified-runtime-owner-pc.json`. Live evidence and what is still not run:
 [docs/acceptance.md](docs/acceptance.md).

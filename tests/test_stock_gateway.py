@@ -79,6 +79,7 @@ def recorded(stock, monkeypatch):
     return calls
 
 
+@pytest.mark.windows
 def test_stock_stop_uses_hermes_own_stop_per_owner_home(recorded, stock, monkeypatch):
     states = iter([{'status': 'running', 'pid': 21, 'born': 1.0}, {'status': 'stopped', 'pid': None, 'born': None}])
     monkeypatch.setattr(ops, 'service', lambda: next(states))
@@ -91,6 +92,7 @@ def test_stock_stop_uses_hermes_own_stop_per_owner_home(recorded, stock, monkeyp
     assert all(kw['env']['HERMES_NONINTERACTIVE'] == '1' for _, kw in recorded)
 
 
+@pytest.mark.windows
 def test_gateway_commands_go_through_hermes_own_launcher(recorded, stock):
     # Seen on a real stock install: `python -m hermes_cli.main gateway start` spawns a gateway that exits at once.
     ops.gateway_command('start', stock)
@@ -118,6 +120,7 @@ def test_a_service_install_keeps_the_web_health_check(tmp_path, monkeypatch):
     assert load_settings().gateway_health_url == 'http://127.0.0.1:8642/health'
 
 
+@pytest.mark.windows
 def test_stock_stop_refuses_to_continue_while_a_gateway_survives(recorded, stock, monkeypatch):
     monkeypatch.setattr(ops, 'service', lambda: {'status': 'running', 'pid': 21, 'born': 1.0})
     monkeypatch.setattr(ops, 'wait_for', lambda fn, timeout, message: fn() or (_ for _ in ()).throw(SwitchError(message)))
@@ -125,6 +128,7 @@ def test_stock_stop_refuses_to_continue_while_a_gateway_survives(recorded, stock
         ops.WindowsOps({}).stop_gateway()
 
 
+@pytest.mark.windows
 def test_stock_start_never_installs_a_login_task_and_waits_for_a_real_process(recorded, stock, monkeypatch):
     monkeypatch.setattr(ops, 'service', lambda: {'status': 'running', 'pid': 30, 'born': 9.0})
     ops.WindowsOps({}).start_gateway()
