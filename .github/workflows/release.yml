@@ -1,24 +1,23 @@
 name: Release
 
-# Publishes a GitHub release: builds the archive with build_release.py from the chosen commit,
-# runs the backend tests on the extracted archive on Windows, creates the tag on that commit,
-# and attaches the archive, its SHA-256 and a gates file. Run it by hand from the Actions tab.
+# Publishes the GitHub release for the version in plugin.yaml, once.
+# It runs when a release-notes file lands on main (.github/release-notes/<version>.md) and can be
+# started by hand. It does nothing when the notes file is missing or the release already exists.
+# Otherwise it builds the archive with build_release.py, runs the backend tests on the extracted
+# archive on Windows, creates tag v<version> on this commit, and attaches the archive, its
+# SHA-256 and a gates file.
 on:
+  push:
+    branches: [main]
+    paths: ['.github/release-notes/*.md']
   workflow_dispatch:
-    inputs:
-      tag:
-        description: Tag to create, for example v1.3.3 (must match plugin.yaml)
-        required: true
-      commit:
-        description: Commit to release (full SHA or branch name)
-        required: true
-        default: main
-      notes:
-        description: Release notes (Markdown)
-        required: true
 
 permissions:
   contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -29,26 +28,36 @@ jobs:
       run:
         shell: bash
     env:
-      TAG: ${{ inputs.tag }}
-      NOTES: ${{ inputs.notes }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v5
-        with:
-          ref: ${{ inputs.commit }}
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-      - name: Check the tag matches the plugin version
+      - name: Decide whether to release
+        id: plan
         run: |
           version=$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\}\r\{0,1\}$/\1/p' plugin.yaml)
-          echo "plugin.yaml version: $version"
-          test "v$version" = "$TAG"
+          test -n "$version"
           echo "VERSION=$version" >> "$GITHUB_ENV"
-          echo "COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "TAG=v$version" >> "$GITHUB_ENV"
+          echo "NOTES=.github/release-notes/$version.md" >> "$GITHUB_ENV"
+          if [ ! -f ".github/release-notes/$version.md" ]; then
+            echo "No .github/release-notes/$version.md; nothing to release."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          elif gh release view "v$version" >/dev/null 2>&1; then
+            echo "Release v$version already exists; nothing to do."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Releasing v$version from $GITHUB_SHA."
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.plan.outputs.go == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
       - name: Build the archive
+        if: steps.plan.outputs.go == 'true'
         run: python build_release.py --output out
       - name: Run the backend tests on the extracted archive
+        if: steps.plan.outputs.go == 'true'
         run: |
           mkdir extracted
           python -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "out/account-switcher-$VERSION.zip" extracted
@@ -56,6 +65,7 @@ jobs:
           cd extracted
           python -m pytest tests -q -p no:cacheprovider | tee ../pytest.txt
       - name: Write the gates file
+        if: steps.plan.outputs.go == 'true'
         run: |
           python - <<'PY'
           import json, os, re, zipfile
@@ -68,7 +78,7 @@ jobs:
               'archive': os.path.basename(archive),
               'archive_sha256': open(archive[:-4] + '.sha256').read().split()[0],
               'archive_files': len(zipfile.ZipFile(archive).namelist()),
-              'public_commit': os.environ['COMMIT'],
+              'public_commit': os.environ['GITHUB_SHA'],
               'automated_tests': {'backend_on_the_extracted_archive': passed, 'pytest_summary': summary},
               'workflow_run': f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
           }
@@ -78,7 +88,7 @@ jobs:
           print(json.dumps(gates, indent=1))
           PY
       - name: Publish the release
+        if: steps.plan.outputs.go == 'true'
         run: |
-          printf '%s\n' "$NOTES" > notes.md
-          gh release create "$TAG" --target "$COMMIT" --title "Hermes Account Switcher $VERSION" --notes-file notes.md \
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "Hermes Account Switcher $VERSION" --notes-file "$NOTES" \
             "out/account-switcher-$VERSION.zip" "out/account-switcher-$VERSION.sha256" "out/release-$VERSION-gates.json"
