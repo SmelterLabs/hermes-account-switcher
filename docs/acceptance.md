@@ -24,8 +24,8 @@ Run from this repository; no Hermes needed.
 
 | Item | Status |
 |---|---|
-| Backend suites (fixture logins, temporary homes, stand-in commands) | **280 passing** |
-| Interface suite (stand-in for Hermes's plugin kit, not the real app) | **34 passing** |
+| Backend suites (fixture logins, temporary homes, stand-in commands) | **353 passing** on Windows (CI, 2026-10-21) |
+| Interface suite (stand-in for Hermes's plugin kit, not the real app) | **44 passing** (CI, 2026-10-21) |
 | Real-host import check: `plugin_api.py` loaded the way Hermes's web server loads it, in Hermes's own Python with the live checkout importable | **Passed 2026-10-07** on the owner's PC (Hermes `90d5048f`): 6 routes mounted, no generic sibling name and no `dashboard/` entry in that interpreter, every required public interface present, Hermes's idle proof readable, no private Desktop server name referenced. |
 
 These prove the logic. They do not prove a switch on a real machine; section D does.
