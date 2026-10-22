@@ -1,5 +1,18 @@
 # Release notes — Hermes Account Switcher
 
+## Unreleased
+
+Switching is faster.
+
+- **Every profile is written at once.** A switch runs Hermes's own commands for each profile, and each
+  one starts Hermes afresh, which takes seconds on Windows. The Claude writes ran one profile after
+  another and the Codex writes eight at a time; now all profiles are written side by side, each still
+  touching only its own files.
+- **The Codex cooldown reset runs only where it is needed.** It used to run for every profile; now only
+  where the chosen login actually carries a cooldown or error, which the receipt names.
+- **No start-up pause** for a switch that restarts nothing.
+- The receipt records how long each step took.
+
 ## 1.4.2
 
 A Codex switch no longer waits for Hermes to finish what it is doing. Installed on the owner's PC and

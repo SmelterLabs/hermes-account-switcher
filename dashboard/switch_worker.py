@@ -45,7 +45,11 @@ def _main_bound(operation_id):
     ops.atomic(ops.LOCK, {'operation_id': operation_id, 'pid': os.getpid()})
     handed_off = False
     try:
-        time.sleep(3)  # Let the confirmed UI response render before any shutdown.
+        # Let the confirmed UI response render before anything shuts down. A switch without a restart shuts
+        # nothing down, so it starts at once.
+        if not (ops.gateway_hosts_desktop() and ops.live_switch_possible(record['target'])):
+            time.sleep(3)
+        record.setdefault('checkpoints', []).append({'step': 'worker_started', 'time': time.time()})
         # On the unified gateway runtime the gateway, not Desktop, started this worker and Desktop stays open.
         main_pid = None if ops.gateway_hosts_desktop() else desktop().pid
         if main_pid is not None and main_pid in {p.pid for p in psutil.Process().parents()}:

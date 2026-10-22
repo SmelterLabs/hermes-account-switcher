@@ -53,8 +53,14 @@ The release is a "unified package": backend code under
    answer and the window closing is the accepted gap (see the first gotcha).
 3. **Stop**: a polite close of the exact Desktop window, wait for its process tree, stop the
    gateway.
-4. **Apply**: `hermes auth priority` and `hermes auth reset` per Codex store; `.env` write or
-   removal per home for Claude; every store read back.
+4. **Apply**: `hermes auth priority` per Codex store, plus `hermes auth reset` only where the target
+   login carries a status (`needs_reset`, the fields Hermes's own reset checks; the receipt's
+   `codex_applied.reset_profiles` names them); the `.env` variable and then the provider setting per
+   home for Claude; every store read back. Each command starts a fresh Hermes Python, so all profiles
+   are written side by side in one round (`side_by_side`, up to `PROFILE_PARALLEL` = 16); every profile
+   writes only its own `auth.json`, `.env` and `config.yaml`, and within one profile the commands stay
+   in order. The receipt times each step (`checked`, `codex_applied`, `claude_applied`, `verified`).
+   A switch without a restart skips the worker's 3 s render pause.
 5. **Start**: the gateway, its health, then Hermes Desktop through the Windows shell so it gets
    the user's environment and not the worker's.
 6. **Verify**: new process ids, every reopened backend's own state, every stored order, Claude
@@ -261,7 +267,7 @@ the interface suite on Linux, on every push to `main` and every pull request. Te
 Windows APIs or drive-letter paths carry `@pytest.mark.windows` and are skipped on other systems,
 so only the Windows job proves them.
 
-Current counts: 391 backend, 49 interface. The 1.2.3 runtime support was proven on the owner's
+Current counts: 395 backend, 49 interface. The 1.2.3 runtime support was proven on the owner's
 PC with one real switch: `docs/receipts/2026-10-17-unified-runtime-owner-pc.json`. Live evidence and what is still not run:
 [docs/acceptance.md](docs/acceptance.md).
 

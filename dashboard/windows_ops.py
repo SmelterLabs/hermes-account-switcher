@@ -629,13 +629,19 @@ def apply_claude(key, allow_changed=False):
     """Point every store at the folder for ``key``, in both places the provider reads: its ``claude_config_dir``
     setting (applies to the next spawn) and the .env variable (applies after a gateway start, and to providers
     before 0.3.1). ``'unset'`` clears both (plugin default)."""
-    for home in profile_homes():
-        if not allow_changed:
-            ensure_settings_unchanged()
-        value = '--remove' if key == 'unset' else claude_value(key)
+    # Each profile's .env and config.yaml are its own; profiles are written side by side, and within one the
+    # .env first, then the setting, as before.
+    if not allow_changed:
+        ensure_settings_unchanged()
+    value = '--remove' if key == 'unset' else claude_value(key)
+
+    def write(home):
         command([str(runtime_python()), str(ENV_SET), CLAUDE_VAR, value], home=home)
         command([str(runtime_python()), '-m', 'hermes_cli.main', 'config', 'set', CLAUDE_SETTING,
                  '' if key == 'unset' else value], home=home)
+    side_by_side(write, profile_homes())
+    if not allow_changed:
+        ensure_settings_unchanged()
     state = claude_selection()
     if key == 'unset':
         if state['state'] != 'unset':
@@ -1055,31 +1061,52 @@ def launch_desktop():
                      stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
 
 
-# Each store's two Hermes commands start a fresh Python, a few seconds each. Run one after another across ten
-# profiles they kept the gateway down for about a minute on the owner's PC (2026-10-21), long enough for Hermes
-# Desktop to start a gateway of its own that the restarted one then had to replace. Stores are separate files,
-# so they are reordered side by side; within a store the order stays priority, then reset.
-CODEX_PARALLEL = 8
+# Each Hermes command starts a fresh Python, a few seconds each on Windows. Run one after another across ten
+# profiles they kept the gateway down for about a minute on the owner's PC (2026-10-21), and a live switch still
+# took 76 s (2026-10-22). Every profile keeps its own files, so all of them are written side by side in one
+# round; within a profile the commands stay in order.
+PROFILE_PARALLEL = 16
+CODEX_PARALLEL = PROFILE_PARALLEL
 
 
-def reorder_codex_stores(target, homes=None, reset=True):
-    """Put `target` first in every Codex store, or only in `homes`. `reset` also clears the target's cooldown;
-    a repair after a revert skips it, so the order is back in one command."""
-    def reorder(home, acc):
-        target_id = acc[target]['entry']['id']
-        command([str(runtime_python()), '-m', 'hermes_cli.main', 'auth', 'priority', 'openai-codex', target_id, '0'], home=home)
-        if reset:
-            command([str(runtime_python()), '-m', 'hermes_cli.main', 'auth', 'reset', 'openai-codex', target_id], home=home)
-
-    stores = [(home, acc) for home, acc in codex_stores() if homes is None or home in homes]
-    if not stores:
-        return
-    with ThreadPoolExecutor(max_workers=min(CODEX_PARALLEL, len(stores))) as pool:
-        futures = [pool.submit(reorder, home, acc) for home, acc in stores]
+def side_by_side(work, items):
+    """Run `work(item)` for every item at once (up to PROFILE_PARALLEL); raise the first error after all finish."""
+    items = list(items)
+    if not items:
+        return []
+    with ThreadPoolExecutor(max_workers=min(PROFILE_PARALLEL, len(items))) as pool:
+        futures = [pool.submit(work, item) for item in items]
         errors = [future.exception() for future in futures]
     first = next((error for error in errors if error is not None), None)
     if first is not None:
         raise first
+    return [future.result() for future in futures]
+
+
+# The fields Hermes's own `auth reset` looks at to decide a login has a status to clear
+# (agent/credential_pool_admin.py reset_statuses); `failure_reason` sits in the row's extra fields.
+STATUS_FIELDS = ('last_status', 'last_status_at', 'last_error_code', 'failure_reason', 'model_cooldowns')
+
+
+def needs_reset(entry):
+    return any(entry.get(field) for field in STATUS_FIELDS)
+
+
+def reorder_codex_stores(target, homes=None, reset=True):
+    """Put `target` first in every Codex store, or only in `homes`, and return the profiles whose target login
+    also had a cooldown or error cleared. `reset` allows that clearing; it runs only where the login carries a
+    status (usually none), and a repair after a revert never needs it."""
+    def reorder(store):
+        home, acc = store
+        target_id = acc[target]['entry']['id']
+        command([str(runtime_python()), '-m', 'hermes_cli.main', 'auth', 'priority', 'openai-codex', target_id, '0'], home=home)
+        if reset and needs_reset(acc[target]['entry']):
+            command([str(runtime_python()), '-m', 'hermes_cli.main', 'auth', 'reset', 'openai-codex', target_id], home=home)
+            return home_name(home)
+        return None
+
+    stores = [(home, acc) for home, acc in codex_stores() if homes is None or home in homes]
+    return [name for name in side_by_side(reorder, stores) if name]
 
 
 # After a live Codex switch, a turn that was already running keeps its own copy of the Codex pool. Hermes writes
@@ -1228,6 +1255,7 @@ class WindowsOps:
         atomic(RECEIPT, self.record)
 
     def preflight(self, request):
+        began = time.monotonic()
         ensure_settings_unchanged()
         try:
             require_switch_interfaces()
@@ -1268,6 +1296,7 @@ class WindowsOps:
         self.record.update(previous=previous, desktop_restarts=not self.hosted, restarts=not self.live,
                            old_desktop_pid=self.old_main.pid if self.old_main else None,
                            old_gateway_pid=self.old_gateway[0] if self.gateway else None)
+        self.checkpoint('checked', seconds=round(time.monotonic() - began, 1))
         return {'previous': previous}
 
     def freeze(self):
@@ -1379,14 +1408,17 @@ class WindowsOps:
             if not allow_changed:
                 ensure_settings_unchanged()
             began = time.monotonic()
-            reorder_codex_stores(target)
+            reset = reorder_codex_stores(target)
             if not allow_changed:
                 ensure_settings_unchanged()
-            self.checkpoint('codex_applied', seconds=round(time.monotonic() - began, 1))
+            # `reset_profiles`: where the target login had a cooldown or error, so `auth reset` ran as well.
+            self.checkpoint('codex_applied', seconds=round(time.monotonic() - began, 1), reset_profiles=reset)
             if common_selection(codex_stores()) != target:
                 raise SwitchError('Saved account readback does not match the requested account in every profile.')
         if request.get('claude'):
+            began = time.monotonic()
             apply_claude(request['claude'], allow_changed=allow_changed)
+            self.checkpoint('claude_applied', seconds=round(time.monotonic() - began, 1))
 
     def start(self):
         if self.live:
@@ -1403,6 +1435,7 @@ class WindowsOps:
             launch_desktop()
 
     def verify(self, request):
+        self.verify_began = time.monotonic()
         self.stage('verifying')
         codex_target = request.get('codex')
         claude_target = request.get('claude')
@@ -1506,6 +1539,8 @@ class WindowsOps:
             identity = claude_identity(claude_target)
             result['claude'] = claude_target
             result['claude_identity'] = identity['method']
+        if getattr(self, 'verify_began', None) is not None:
+            self.checkpoint('verified', seconds=round(time.monotonic() - self.verify_began, 1))
         return result
 
     def recover(self, previous, changed):

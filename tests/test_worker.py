@@ -302,3 +302,15 @@ def test_a_switch_without_a_codex_change_is_not_watched(operation, monkeypatch):
     monkeypatch.setattr(worker.ops, 'guard_codex_order', lambda record: pytest.fail('nothing to watch'))
     worker.main('test')
     assert json.loads(receipt.read_text())['state'] == 'complete'
+
+
+def test_a_switch_without_a_restart_starts_without_the_render_pause(operation, monkeypatch):
+    receipt, lock = operation
+    monkeypatch.setattr(worker.psutil, 'Process', lambda: SimpleNamespace(parents=lambda: []))
+    monkeypatch.setattr(worker.ops, 'gateway_hosts_desktop', lambda: True)
+    monkeypatch.setattr(worker.ops, 'live_switch_possible', lambda request: True)
+    monkeypatch.setattr(worker.time, 'sleep', lambda seconds: pytest.fail('a live switch does not pause'))
+    monkeypatch.setattr(worker, 'switch_transaction', lambda *a: {'codex': 'work'})
+    worker.main('test')
+    final = json.loads(receipt.read_text())
+    assert final['state'] == 'complete' and final['checkpoints'][0]['step'] == 'worker_started'
