@@ -4,7 +4,7 @@ What "accepted" means for this plugin, split into five kinds of evidence. Passin
 substitutes for another. Nothing below is marked passed unless it ran, and every live result
 names its receipt.
 
-Release: **1.2.3**. Last updated 2026-10-17.
+Release: **1.3.3**. Last updated 2026-10-22. 1.3.3 was installed and tested on the owner's PC before release; its automated gates (backend tests on the exact archive, on Windows) are attached to the GitHub release as `release-1.3.3-gates.json`. The sections below record the evidence gathered for earlier releases.
 
 1.2.3 adds support for Hermes 0.22 (the gateway restarts alone; Hermes Desktop stays open). Proven
 on the owner's PC with one real switch before release: `receipts/2026-10-17-unified-runtime-owner-pc.json`.
