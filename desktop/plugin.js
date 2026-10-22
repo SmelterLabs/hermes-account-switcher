@@ -317,7 +317,7 @@ function AccountSelect({ id, label, value, onChange, options, disabled, help }) 
 function SwitchDialog({
   open, onOpenChange, status, preflight, checkState, checkError, codexTarget, claudeTarget,
   onCodexChange, onClaudeChange, onRecheck, localPending, operationNotice: notice, onDismissNotice, switchError, onConfirm,
-  restarting
+  restarting, watchedKey
 }) {
   const pendingFromStatus = isPendingOperation(status.last_operation) || status.in_progress
   const pendingNotice = notice?.kind === 'pending'
@@ -327,9 +327,10 @@ function SwitchDialog({
   const codexChanged = isAccountKey(codexTarget, current.codex.accounts) && codexTarget !== current.codex.selected
   const claudeChanged = isAccountKey(claudeTarget, current.claude.accounts) && claudeTarget !== current.claude.selected
   const canConfirm = checkState === 'ready' && !checkError && !busy && (codexChanged || claudeChanged)
-  // The last switch finished and the dropdowns still show what it switched to: say so on the button.
+  // A switch this dialog watched finish, with the dropdowns still showing what it switched to: say so on the button.
+  // A receipt read from disk on opening the dialog is history, shown in the notice, not a button label.
   // Changing either dropdown makes it a new switch again.
-  const completed = notice?.kind === 'success' && !codexChanged && !claudeChanged
+  const completed = notice?.kind === 'success' && notice.key && notice.key === watchedKey && !codexChanged && !claudeChanged
   const codexOptions = current.codex.accounts.map(account => ({ value: account.key, text: `${account.label} — ${account.email}` }))
   const claudeOptions = [
     ...(current.claude.state === 'set' ? [] : [{ value: CLAUDE_UNSET, text: current.claude.state === 'mixed' ? 'Mixed — profiles disagree' : 'Unset — Claude Code’s own login', disabled: true }]),
@@ -617,6 +618,8 @@ function AccountStatusButton({ rest }) {
   const [agentText, setAgentText] = useState(null)
   const [dismissedKey, setDismissedKey] = useState(readDismissed)
   const [staleKey, setStaleKey] = useState(null)
+  // The operation this dialog watched finish, so "Switch completed" is never a receipt read from disk.
+  const [watchedKey, setWatchedKey] = useState(null)
   const disposed = useRef(false)
   // Read from the 10-second poll, whose closure is the first render's.
   const openRef = useRef(false)
@@ -648,6 +651,9 @@ function AccountStatusButton({ rest }) {
         // the pre-flight taken before it names the old accounts, so take a fresh one.
         if (awaitingResult.current) {
           awaitingResult.current = false
+          // A switch this dialog watched finish: the button says "Switch completed" until a dropdown
+          // changes. A receipt merely read from disk on opening the dialog stays a notice, not a button label.
+          if (notice.key) setWatchedKey(notice.key)
           if (openRef.current && !next.setup_needed) void runPreflight()
         }
       }
@@ -842,6 +848,7 @@ function AccountStatusButton({ rest }) {
         onClaudeChange: setClaudeTarget,
         open,
         operationNotice: presentNotice(operationNoticeState, { dismissedKey, staleKey }),
+        watchedKey,
         restarting,
         onDismissNotice: key => {
           setDismissedKey(key)
