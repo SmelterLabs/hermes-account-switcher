@@ -1,5 +1,18 @@
 # Release notes — Hermes Account Switcher
 
+## Unreleased
+
+Running work no longer blocks a switch that restarts nothing.
+
+- **A Claude-only switch is instant.** With the Claude provider 0.3.1 or later it no longer waits for
+  Hermes to be idle and no longer turns messages away: a running reply cannot write the Claude choice
+  back, so the switch applies at once and every chat uses the new account from its next message.
+- **A Codex switch waits for the reply instead of refusing.** It turns new messages away, waits for the
+  replies already running to finish (checking twice a second, so it goes on at once when Hermes is
+  idle), and gives up only after a minute. A prompt waiting on you still blocks it: that can hold a reply
+  open for hours. The window says "Waiting for the current reply to finish" meanwhile.
+- A switch that restarts the gateway (an older Claude provider) still refuses while anything runs.
+
 ## 1.4.0
 
 Switching no longer restarts anything on Hermes 0.22 and later. Installed on the owner's PC and used

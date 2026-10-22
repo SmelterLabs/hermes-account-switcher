@@ -967,25 +967,50 @@ def preflight(own_state=None):
     elif hosted and load_settings().gateway_service and not service_owns_gateway(load_settings().gateway_service):
         blockers.append(f'The Hermes gateway running now is not the Windows service {load_settings().gateway_service}; '
                         'restart that service first.')
+    # Work that is running or waiting. It blocks only a switch that restarts something; see `busy` below.
+    busy = []
     if hosted:
         # Desktop has no backend to ask: the gateway runs every turn and serves this route, so Hermes's
         # idle proof is this process's own. The worker, a separate process, relies on the drain below.
         if own_state is not None:
-            blockers.extend(own_state()['blockers'])
+            busy.extend(own_state()['blockers'])
     else:
         for b in backends(desktop()):
             local = own_state() if own_state is not None and b['pid'] == os.getpid() else call(b, '/local-state')
-            blockers.extend(f"{b['profile']}: {x}" for x in local['blockers'])
+            busy.extend(f"{b['profile']}: {x}" for x in local['blockers'])
     for home, state in gateway_states() if gateway else []:
         if state['active_agents']:
-            blockers.append(f'{home_name(home)}: gateway or scheduled work is active.')
+            busy.append(f'{home_name(home)}: gateway or scheduled work is active.')
         if state['gateway_state'] == 'draining':
             blockers.append('Another gateway maintenance operation is in progress.')
     if EMAILS and summary['codex']['selected'] is None:
         blockers.append('Hermes profiles disagree on which Codex account comes first.')
-    # Whether a switch restarts the gateway; a Claude switch needs provider 0.3.1 or later to skip it.
-    restarts = not live_switch_possible({'claude': bool(CLAUDE)})
-    return {'ok': not blockers, 'blockers': blockers, 'desktop_restarts': not hosted, 'restarts': restarts, **summary}
+    busy = list(dict.fromkeys(busy))
+    # Which part of a switch restarts something. Codex never does on the unified runtime; Claude needs
+    # provider 0.3.1 or later to skip it.
+    restarts_for = {'codex': not live_switch_possible({'codex': True}),
+                    'claude': not live_switch_possible({'claude': True})}
+    # What running work means for each part of a switch, so the dialog blocks only what must wait:
+    # - a part that restarts the gateway waits for all of it (a restart would cut replies off);
+    # - a Codex switch without a restart holds new messages and waits up to a minute for running replies,
+    #   but not for a prompt waiting on the person, which can hold a reply open for hours;
+    # - a Claude switch without a restart needs nothing: no running reply writes the Claude choice back.
+    if all(restarts_for.values()):
+        # Every switch restarts here (Hermes before 0.22): running work blocks it, as it always has.
+        blockers, busy_codex, busy_claude = blockers + busy, [], []
+    else:
+        busy_codex = busy if restarts_for['codex'] else [b for b in busy if b in WAITING_ON_PERSON]
+        busy_claude = busy if restarts_for['claude'] else []
+    return {'ok': not blockers, 'blockers': blockers, 'busy': busy,
+            'blockers_codex': busy_codex, 'blockers_claude': busy_claude,
+            'desktop_restarts': not hosted, 'restarts': any(restarts_for.values()), 'restarts_for': restarts_for,
+            **summary}
+
+
+# Hermes's own idle-proof answer for a prompt waiting on the person (compat.desktop_idle_blockers).
+WAITING_ON_PERSON = ('A conversation is waiting for input.',)
+# How long a Codex switch without a restart waits for running replies to finish, holding new ones.
+CODEX_IDLE_WAIT = 60
 
 
 def wait_for(fn, timeout, message):
@@ -1078,6 +1103,9 @@ class WindowsOps:
         # Live switch: nothing restarts. The drain holds new turns while the stores change; the gateway reads them
         # on the next turn. stop() and start() then hold and release instead of stopping and starting.
         self.live = False
+        # Whether a live switch holds new turns. A Claude-only live switch does not: no running reply writes
+        # the Claude choice back, so it applies at once, even mid-chat.
+        self.hold = True
 
     def stage(self, name):
         self.record['state'] = name
@@ -1103,8 +1131,13 @@ class WindowsOps:
             hermes_launcher()
         self.stage('checking')
         p = preflight()
-        if not p['ok']:
-            raise SwitchError(' '.join(p['blockers']))
+        self.hosted = gateway_hosts_desktop()
+        self.gateway = self.hosted or gateway_in_use()
+        self.live = self.hosted and self.gateway and live_switch_possible(request)
+        self.hold = not (self.live and not request.get('codex'))
+        # Running work blocks only a switch that restarts; a live Codex switch waits for it in freeze().
+        if not p['ok'] or (not self.live and p.get('busy')):
+            raise SwitchError(' '.join(p['blockers'] or p.get('busy') or []))
         previous = {}
         if request.get('codex'):
             if p['codex']['selected'] not in EMAILS:
@@ -1122,14 +1155,11 @@ class WindowsOps:
             identity = claude_identity(request['claude'])
             self.record['claude_identity_before'] = identity['method']
             previous['claude'] = p['claude']['selected'] if p['claude']['state'] == 'set' else 'unset'
-        self.hosted = gateway_hosts_desktop()
         if not self.hosted:
             self.old_main = desktop()
             self.bs = backends(self.old_main)
-        self.gateway = self.hosted or gateway_in_use()
         self.old_gateway = gateway_identity(service()) if self.gateway else None
-        self.live = self.hosted and self.gateway and live_switch_possible(request)
-        self.record.update(previous=previous, desktop_restarts=not self.hosted, restarts=not self.live,
+        self.record.update(holds_turns=self.hold, previous=previous, desktop_restarts=not self.hosted, restarts=not self.live,
                            old_desktop_pid=self.old_main.pid if self.old_main else None,
                            old_gateway_pid=self.old_gateway[0] if self.gateway else None)
         return {'previous': previous}
@@ -1137,7 +1167,7 @@ class WindowsOps:
     def freeze(self):
         ensure_settings_unchanged()
         self.stage('checking')
-        if self.gateway:
+        if self.gateway and self.hold:
             drain = drain_control()
             for home, _ in gateway_states():
                 if drain.drain_requested(home=home):
@@ -1145,7 +1175,13 @@ class WindowsOps:
                 drain.write_drain_request(home=home, principal='account-switcher', suppress_notification=True)
                 self.drained.append(home)
             wait_for(lambda: gateway_states(require_drain=True), 12, 'Gateway did not acknowledge the restart safety gate.')
-            if any(d['active_agents'] for _, d in gateway_states(require_drain=True)):
+            if self.live:
+                # New messages are turned away now; let the replies already running finish.
+                self.checkpoint('waiting_for_replies')
+                wait_for(lambda: not any(d['active_agents'] for _, d in gateway_states(require_drain=True)),
+                         CODEX_IDLE_WAIT, 'Hermes was still answering after a minute, or a chat is waiting for '
+                         'your answer. Nothing was switched; try again when it finishes.')
+            elif any(d['active_agents'] for _, d in gateway_states(require_drain=True)):
                 raise SwitchError('Gateway work started during preflight. Nothing was switched; retry when idle.')
         # Hermes's own idle proof, asked again of every Desktop backend just before the close. There is no
         # admission hold: work that starts between this answer and the window closing is the accepted gap.
@@ -1172,8 +1208,9 @@ class WindowsOps:
         ensure_settings_unchanged()
         if self.live:
             self.stage('applying')
-            self.held_idle()
-            self.checkpoint('gateway_held')
+            if self.hold:
+                self.held_idle()
+                self.checkpoint('gateway_held')
             return
         self.stage('restarting')
         states = gateway_states(require_drain=True) if self.gateway else []
@@ -1249,7 +1286,8 @@ class WindowsOps:
             ensure_settings_unchanged()
         self.stage('applying')
         if self.live:
-            self.held_idle()
+            if self.hold:
+                self.held_idle()
         elif service()['status'] != 'stopped' or any(process_alive(p) for p in self.old_tree):
             raise SwitchError('An old account consumer is still running; refusing to change credentials.')
         if request.get('codex'):
@@ -1390,7 +1428,7 @@ class WindowsOps:
         self.record['recovery'] = 'not_needed'
         try:
             # A live switch may write the old choice back only while turns are still held.
-            if changed and (service()['status'] == 'stopped' or (self.live and self.drained)):
+            if changed and (service()['status'] == 'stopped' or (self.live and (self.drained or not self.hold))):
                 self.apply({name: previous.get(name) for name in PROVIDERS}, allow_changed=True)
                 self.record['recovery'] = 'previous_preference_restored'
             elif changed:
