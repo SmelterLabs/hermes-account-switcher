@@ -10,8 +10,14 @@ Switching is faster.
   touching only its own files.
 - **The Codex cooldown reset runs only where it is needed.** It used to run for every profile; now only
   where the chosen login actually carries a cooldown or error, which the receipt names.
+- **One Hermes does all the writing.** Instead of starting Hermes once per profile, the switch starts
+  one Hermes helper while it checks the logins and runs Hermes's own write functions for every profile
+  through it, with Hermes's own file locking. If the helper is unavailable (for example a Hermes update
+  renamed a function), the switch uses the per-profile commands and says so.
+- **The check after the switch no longer asks OpenAI and Anthropic again** for a switch without a
+  restart; both logins were confirmed seconds earlier and nothing about them changed.
 - **No start-up pause** for a switch that restarts nothing.
-- The receipt records how long each step took.
+- The window says how many seconds the switch took, and the receipt records each step.
 
 ## 1.4.2
 

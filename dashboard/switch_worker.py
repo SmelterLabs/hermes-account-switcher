@@ -64,8 +64,16 @@ def _main_bound(operation_id):
                  10, 'Worker is still attached to Desktop; no restart or switch was attempted.')
         evidence = switch_transaction(WindowsOps(record), record['target'])
         record.update(evidence)
-        done = 'switched without a restart' if record.get('restarts') is False else 'verified after restart'
-        record.update(state='complete', message=f"{describe(record['target'])} {done}.")
+        if record.get('restarts') is False:
+            took = time.time() - record['started_at'] if isinstance(record.get('started_at'), (int, float)) else None
+            done = 'switched without a restart' + (f' in {took:.1f} s' if took is not None else '')
+        else:
+            done = 'verified after restart'
+        message = f"{describe(record['target'])} {done}."
+        if record.get('writer_fallback'):
+            message += (" Hermes's quick in-process write was unavailable "
+                        f"({record['writer_fallback']}), so the slower per-profile commands were used.")
+        record.update(state='complete', message=message)
     except BaseException as exc:
         # BaseException, not Exception: a Hermes import can end the process with SystemExit, and a receipt
         # left at "accepted" reads as pending forever. Only this plugin's own plain-language errors are shown;

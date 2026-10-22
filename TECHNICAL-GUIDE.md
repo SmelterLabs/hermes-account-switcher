@@ -59,8 +59,20 @@ The release is a "unified package": backend code under
    home for Claude; every store read back. Each command starts a fresh Hermes Python, so all profiles
    are written side by side in one round (`side_by_side`, up to `PROFILE_PARALLEL` = 16); every profile
    writes only its own `auth.json`, `.env` and `config.yaml`, and within one profile the commands stay
-   in order. The receipt times each step (`checked`, `codex_applied`, `claude_applied`, `verified`).
-   A switch without a restart skips the worker's 3 s render pause.
+   in order. The receipt times each step (`worker_started`, `checked`, `codex_applied`,
+   `claude_applied`, `verified`). A switch without a restart skips the worker's 3 s render pause.
+
+   **In-process writer (1.4.3, the fast path).** Preflight starts `dashboard/hermes_writer.py` with
+   Hermes's own Python before the network checks, so its Hermes import overlaps them (the OpenAI quota
+   check and the Anthropic identity check also run side by side). It imports and checks
+   `set_hermes_home_override` / `reset_hermes_home_override`, `load_pool`, `CredentialPool.move_entry` /
+   `reset_status`, `save_env_value` / `remove_env_value` and `set_config_value`, then answers one JSON
+   job per line, running exactly what the commands run for every home under Hermes's own home override
+   (auth.lock, atomic saves). It never writes a file itself and reports only error type names. If it is
+   not ready, does not answer, or a job fails, that switch uses the per-profile commands above; the
+   receipt says `writer: hermes` or `writer: commands` plus `writer_fallback`, and the dialog's
+   completion line names the reason. A live verify reads the stores back but does not ask OpenAI or
+   Anthropic again: preflight already confirmed both logins and a live switch changes no login.
 5. **Start**: the gateway, its health, then Hermes Desktop through the Windows shell so it gets
    the user's environment and not the worker's.
 6. **Verify**: new process ids, every reopened backend's own state, every stored order, Claude
@@ -267,7 +279,7 @@ the interface suite on Linux, on every push to `main` and every pull request. Te
 Windows APIs or drive-letter paths carry `@pytest.mark.windows` and are skipped on other systems,
 so only the Windows job proves them.
 
-Current counts: 395 backend, 49 interface. The 1.2.3 runtime support was proven on the owner's
+Current counts: 408 backend, 49 interface. The 1.2.3 runtime support was proven on the owner's
 PC with one real switch: `docs/receipts/2026-10-17-unified-runtime-owner-pc.json`. Live evidence and what is still not run:
 [docs/acceptance.md](docs/acceptance.md).
 

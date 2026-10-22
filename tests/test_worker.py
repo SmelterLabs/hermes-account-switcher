@@ -314,3 +314,20 @@ def test_a_switch_without_a_restart_starts_without_the_render_pause(operation, m
     worker.main('test')
     final = json.loads(receipt.read_text())
     assert final['state'] == 'complete' and final['checkpoints'][0]['step'] == 'worker_started'
+
+
+def test_a_switch_without_a_restart_says_how_long_it_took_and_if_it_used_the_slow_path(operation, monkeypatch):
+    receipt, lock = operation
+    started = json.loads(receipt.read_text())
+    receipt.write_text(json.dumps({**started, 'started_at': 100.0}))
+    monkeypatch.setattr(worker.psutil, 'Process', lambda: SimpleNamespace(parents=lambda: []))
+    monkeypatch.setattr(worker.time, 'time', lambda: 104.25)
+
+    def live_switch(ops_object, target):
+        ops_object.record.update(restarts=False, writer='commands', writer_fallback='it did not start in time')
+        return {'codex': 'work'}
+    monkeypatch.setattr(worker, 'switch_transaction', live_switch)
+    worker.main('test')
+    message = json.loads(receipt.read_text())['message']
+    assert message.startswith('Codex Work switched without a restart in 4.2 s.')
+    assert 'slower per-profile commands were used' in message and 'did not start in time' in message

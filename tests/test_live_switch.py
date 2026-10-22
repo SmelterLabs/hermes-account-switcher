@@ -540,3 +540,17 @@ def test_the_receipt_times_each_step(home, monkeypatch):
     worker.apply({'codex': None, 'claude': 'gmail'})
     steps = {c['step']: c for c in worker.record['checkpoints']}
     assert isinstance(steps['claude_applied']['seconds'], float)
+
+
+def test_live_verify_does_not_ask_openai_or_anthropic_again(home, monkeypatch):
+    root, _ = home
+    worker = live_worker(root, monkeypatch)
+    worker.record['claude_identity_before'] = 'token'
+    ops.apply_claude('gmail')
+    monkeypatch.setattr(ops, 'service_owns_gateway', lambda name: True)
+    monkeypatch.setattr(ops, 'codex_stores', lambda: [])
+    monkeypatch.setattr(ops, 'common_selection', lambda stores: 'work')
+    monkeypatch.setattr(ops, 'usage', lambda account: pytest.fail('no second quota call'))
+    monkeypatch.setattr(ops, 'claude_identity', lambda key: pytest.fail('no second identity call'))
+    result = worker.verify({'codex': 'work', 'claude': 'gmail'})
+    assert result['claude_identity'] == 'token' and result['codex'] == 'work'

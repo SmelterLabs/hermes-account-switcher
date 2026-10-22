@@ -15,7 +15,7 @@ complete_approved_switch.py reload_backend.py verify_switch_result.py
 README.md USER-GUIDE.md TECHNICAL-GUIDE.md settings.example.json
 package.json package-lock.json requirements-test.in requirements-test.lock
 dashboard/manifest.json dashboard/compat.py dashboard/settings.py
-dashboard/env_set.py dashboard/first_run.py dashboard/plugin_api.py
+dashboard/env_set.py dashboard/first_run.py dashboard/hermes_writer.py dashboard/plugin_api.py
 dashboard/switch_core.py dashboard/switch_worker.py dashboard/windows_ops.py dashboard/worker_launch.py
 desktop/plugin.js desktop/plugin.test.mjs desktop/fixtures.mjs desktop/sdk-stub.mjs
 desktop/test-setup.mjs desktop/vitest.config.mjs
@@ -25,7 +25,7 @@ tests/test_per_profile.py tests/test_process_liveness.py tests/test_recovery.py
 tests/test_reload.py tests/test_settings.py tests/test_switch.py tests/test_worker.py
 tests/test_install.py tests/test_release.py tests/test_stock_runtime.py tests/test_stock_gateway.py
 tests/test_setup.py tests/test_first_run.py tests/test_unified_runtime.py tests/test_gateway_record.py tests/test_stale_desktop.py tests/test_version_consistency.py
-tests/test_live_switch.py
+tests/test_live_switch.py tests/test_hermes_writer.py
 docs/acceptance.md docs/compatibility.md docs/license-decision.md docs/release-notes.md
 docs/receipts/2026-09-28-vm-real-switch.json docs/receipts/2026-09-28-vm-stock-gateway-lifecycle.json
 docs/receipts/2026-09-28-vm-billing-proof.json docs/receipts/2026-09-28-vm-refusals-and-failures.json
