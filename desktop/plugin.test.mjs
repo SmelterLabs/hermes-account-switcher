@@ -249,13 +249,11 @@ describe('account-switcher desktop plugin', () => {
     expect(screen.getByRole('option', { name: 'Three — three@example.invalid (not logged in)' }).disabled).toBe(true)
   })
 
-  it('reads Switch completed after a finished switch, and Switch account again once a dropdown changes', async () => {
+  it('reads Switch account when the dialog opens on a finished receipt, and Switch completed only for a switch it watched finish', async () => {
+    // A receipt on disk from an earlier switch is history: the button stays a new switch.
     await openDialog(makeRest({ status: [STATUS_VERIFIED_Work] }))
-    expect(screen.getByRole('button', { name: 'Switch completed' }).disabled).toBe(true)
-    fireEvent.change(screen.getByRole('combobox', { name: 'Target Codex account' }), { target: { value: 'personal' } })
-    expect(screen.getByRole('button', { name: 'Switch account' }).disabled).toBe(false)
-    fireEvent.change(screen.getByRole('combobox', { name: 'Target Codex account' }), { target: { value: 'work' } })
-    expect(screen.getByRole('button', { name: 'Switch completed' }).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: 'Switch account' }).disabled).toBe(true)
+    expect(screen.getByRole('status').textContent).toContain(STATUS_VERIFIED_Work.last_operation.message)
   })
 
   it('shows a calm restarting note, not Desktop\'s connection error, while the gateway restarts for a switch', async () => {
@@ -410,7 +408,7 @@ describe('account-switcher desktop plugin', () => {
     // The unified gateway runtime: the gateway restarts, Desktop and this dialog stay open.
     const rest = makeRest({
       status: [STATUS_PERSONAL_IDLE, STATUS_PERSONAL_IDLE, STATUS_PENDING, STATUS_VERIFIED_Work],
-      preflight: [preflightFor(STATUS_PERSONAL_IDLE), preflightFor(STATUS_VERIFIED_Work)]
+      preflight: [preflightFor(STATUS_PERSONAL_IDLE), preflightFor(STATUS_VERIFIED_Work), preflightFor(STATUS_VERIFIED_Work)]
     })
     const originalSetInterval = window.setInterval
     const scheduled = []
@@ -431,6 +429,13 @@ describe('account-switcher desktop plugin', () => {
       const done = await screen.findByRole('button', { name: 'Switch completed' })
       expect(done.disabled).toBe(true)
       expect(count(rest, '/switch')).toBe(1)
+      // The label belongs to the switch just watched: changing a dropdown makes it a new switch, and
+      // changing back to what the switch landed on brings the label back. It dies when the dialog closes.
+      await waitFor(() => expect(screen.getByRole('combobox', { name: 'Target Codex account' }).value).toBe('work'))
+      fireEvent.change(screen.getByRole('combobox', { name: 'Target Codex account' }), { target: { value: 'personal' } })
+      expect(screen.getByRole('button', { name: 'Switch account' }).disabled).toBe(false)
+      fireEvent.change(screen.getByRole('combobox', { name: 'Target Codex account' }), { target: { value: 'work' } })
+      expect(screen.getByRole('button', { name: 'Switch completed' }).disabled).toBe(true)
     } finally {
       window.setInterval = originalSetInterval
     }
@@ -525,6 +530,19 @@ describe('account-switcher desktop plugin', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Switch account' }))
     await waitFor(() => expect(count(rest, '/switch')).toBe(1))
     expect(rest.calls.find(call => call.path === '/switch').opts.body).toEqual({ confirmed: true, codex: 'work', claude: 'gmail' })
+  })
+
+  it('says nothing restarts when the backend can switch live', async () => {
+    const rest = makeRest({ preflight: [{ ...preflightFor(STATUS_PERSONAL_IDLE), desktop_restarts: false, restarts: false }] })
+    await openDialog(rest)
+    expect(screen.getByText(/Nothing restarts\. For the short moment the accounts take to change/i)).toBeTruthy()
+    expect(screen.queryByText(/The Hermes gateway will restart/i)).toBeNull()
+  })
+
+  it('keeps the restart notice when the backend does not report a live switch', async () => {
+    const rest = makeRest({ preflight: [{ ...preflightFor(STATUS_PERSONAL_IDLE), desktop_restarts: false }] })
+    await openDialog(rest)
+    expect(screen.getByText(/The Hermes gateway will restart and Hermes Desktop reconnects/i)).toBeTruthy()
   })
 
   it('shows an accepted POST as pending, not as success', async () => {

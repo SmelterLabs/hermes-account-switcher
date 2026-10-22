@@ -1,6 +1,7 @@
 """Bounded Windows operations. Never returns credential/token values to callers."""
 import json
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
@@ -48,14 +49,20 @@ LOCK = ROOT / 'logs/account-switcher.lock'
 NS = '/api/plugins/account-switcher'
 ENV_SET = Path(__file__).resolve().with_name('env_set.py')
 
-# Claude: the DirectSDK plugin hands the `claude` CLI this folder as CLAUDE_CONFIG_DIR, read from the process
-# environment per request, so the account is whichever Hermes-owned login folder every store's .env names.
+# Claude: the DirectSDK plugin hands the `claude` CLI a login folder as CLAUDE_CONFIG_DIR on every spawn. It takes
+# the folder from its per-profile `claude_config_dir` setting in config.yaml (provider 0.3.1 on, re-read on every
+# spawn), else from this variable in the process environment (read from .env only when the gateway starts).
+# A switch writes both, to the same Hermes-owned folder.
 CLAUDE_VAR = 'CLAUDE_SUBSCRIPTION_DIRECTSDK_CONFIG_DIR'
 CLAUDE_AUTH = ROOT / 'claude-auth'
 CLAUDE_CLI = 'claude'
 # The provider's folder and manifest name; Hermes's catalog lists it without the suffix.
 CLAUDE_PROVIDER = 'claude-subscription-directsdk-experimental'
 CLAUDE_PROVIDER_NAMES = (CLAUDE_PROVIDER, 'claude-subscription-directsdk')
+CLAUDE_SETTING_PATH = ('plugins', 'entries', CLAUDE_PROVIDER, 'settings', 'claude_config_dir')
+CLAUDE_SETTING = '.'.join(CLAUDE_SETTING_PATH)
+# The first provider version that reads `claude_config_dir` on every spawn, so a switch needs no restart.
+LIVE_CLAUDE_PROVIDER = (0, 3, 1)
 _PATH_LOCK = threading.RLock()
 
 
@@ -175,6 +182,10 @@ def recover_abandoned_check():
         markers_checked = clear_own_drains()
         if stage in BEFORE_CLOSE:
             message = 'An interrupted account check was cleared. No switch was completed; recheck before trying again.'
+        elif record.get('restarts') is False:
+            message = (f'The last account switch was interrupted during {stage}; Hermes was not restarted. '
+                       'Check which account is selected before switching again.')
+            record['interrupted_during'] = stage
         else:
             message = (f'The last account switch was interrupted during {stage}, after Hermes had been closed. '
                        'Check which account is selected before switching again.')
@@ -408,6 +419,55 @@ def _same_dir(value, key):
         return False
 
 
+def claude_setting(home):
+    """The provider's ``claude_config_dir`` setting in ``home``'s config.yaml, trimmed; '' when not set, None
+    when the configuration cannot be read."""
+    try:
+        value = safe_yaml_load((home / 'config.yaml').read_text(encoding='utf-8-sig'))
+    except Exception:  # UnsupportedRuntime included: the status view shows "mixed"; preflight names the cause.
+        return None
+    if not isinstance(value, dict):
+        return None
+    for segment in CLAUDE_SETTING_PATH:
+        if not isinstance(value, dict) or segment not in value:
+            return ''
+        value = value[segment]
+    return value.strip() if isinstance(value, str) else ''
+
+
+def claude_folder_named(home):
+    """The folder the provider hands `claude` in ``home``: the setting wins, then the .env variable (its own
+    precedence). None when neither names one; ``False`` when the configuration is unreadable."""
+    setting = claude_setting(home)
+    if setting is None:
+        return False
+    return setting or env_values(home).get(CLAUDE_VAR) or None
+
+
+def claude_provider_version():
+    """The installed Claude provider's version as a tuple of ints, or None when it cannot be read."""
+    for name in CLAUDE_PROVIDER_NAMES:
+        try:
+            manifest = safe_yaml_load((ROOT / 'plugins' / name / 'plugin.yaml').read_text(encoding='utf-8-sig'))
+            match = re.match(r'\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?', str(manifest['version']))
+            if match:
+                return tuple(int(part or 0) for part in match.groups())
+        except Exception:  # unreadable: the switch keeps the restart
+            continue
+    return None
+
+
+def live_switch_possible(request):
+    """True when this switch can apply without restarting anything: the gateway runs every turn (unified
+    runtime) and reloads the Codex pool each turn, and, for Claude, the provider reads its setting per spawn."""
+    if not gateway_hosts_desktop():
+        return False
+    if request.get('claude'):
+        version = claude_provider_version()
+        return version is not None and version >= LIVE_CLAUDE_PROVIDER
+    return True
+
+
 def claude_selection():
     """Which Hermes-owned Claude folder every store names: ``{'selected', 'state', 'stores'}``.
 
@@ -416,8 +476,10 @@ def claude_selection():
     """
     stores = {}
     for home in profile_homes():
-        value = env_values(home).get(CLAUDE_VAR)
-        if not value:
+        value = claude_folder_named(home)
+        if value is False:
+            stores[home.name] = 'foreign'
+        elif not value:
             stores[home.name] = None
         else:
             stores[home.name] = next((key for key in CLAUDE if _same_dir(value, key)), 'foreign')
@@ -564,12 +626,16 @@ def claude_value(key):
 
 
 def apply_claude(key, allow_changed=False):
-    """Point every store's .env at the folder for ``key``; ``'unset'`` removes the variable (plugin default)."""
+    """Point every store at the folder for ``key``, in both places the provider reads: its ``claude_config_dir``
+    setting (applies to the next spawn) and the .env variable (applies after a gateway start, and to providers
+    before 0.3.1). ``'unset'`` clears both (plugin default)."""
     for home in profile_homes():
         if not allow_changed:
             ensure_settings_unchanged()
         value = '--remove' if key == 'unset' else claude_value(key)
         command([str(runtime_python()), str(ENV_SET), CLAUDE_VAR, value], home=home)
+        command([str(runtime_python()), '-m', 'hermes_cli.main', 'config', 'set', CLAUDE_SETTING,
+                 '' if key == 'unset' else value], home=home)
     state = claude_selection()
     if key == 'unset':
         if state['state'] != 'unset':
@@ -917,7 +983,9 @@ def preflight(own_state=None):
             blockers.append('Another gateway maintenance operation is in progress.')
     if EMAILS and summary['codex']['selected'] is None:
         blockers.append('Hermes profiles disagree on which Codex account comes first.')
-    return {'ok': not blockers, 'blockers': blockers, 'desktop_restarts': not hosted, **summary}
+    # Whether a switch restarts the gateway; a Claude switch needs provider 0.3.1 or later to skip it.
+    restarts = not live_switch_possible({'claude': bool(CLAUDE)})
+    return {'ok': not blockers, 'blockers': blockers, 'desktop_restarts': not hosted, 'restarts': restarts, **summary}
 
 
 def wait_for(fn, timeout, message):
@@ -1007,6 +1075,9 @@ class WindowsOps:
         self.gateway = True
         # Unified gateway runtime: Desktop holds no account and stays open; it reattaches by itself.
         self.hosted = False
+        # Live switch: nothing restarts. The drain holds new turns while the stores change; the gateway reads them
+        # on the next turn. stop() and start() then hold and release instead of stopping and starting.
+        self.live = False
 
     def stage(self, name):
         self.record['state'] = name
@@ -1057,7 +1128,8 @@ class WindowsOps:
             self.bs = backends(self.old_main)
         self.gateway = self.hosted or gateway_in_use()
         self.old_gateway = gateway_identity(service()) if self.gateway else None
-        self.record.update(previous=previous, desktop_restarts=not self.hosted,
+        self.live = self.hosted and self.gateway and live_switch_possible(request)
+        self.record.update(previous=previous, desktop_restarts=not self.hosted, restarts=not self.live,
                            old_desktop_pid=self.old_main.pid if self.old_main else None,
                            old_gateway_pid=self.old_gateway[0] if self.gateway else None)
         return {'previous': previous}
@@ -1086,8 +1158,23 @@ class WindowsOps:
         if {b['pid'] for b in backends(self.old_main)} != {b['pid'] for b in self.bs}:
             raise SwitchError('Desktop backend inventory changed during preflight; retry.')
 
+    def held_idle(self):
+        """Live switch: every gateway still holds new turns and runs none, so no turn can read a half-changed
+        store or write an old Codex order back from its own copy of the pool."""
+        try:
+            states = gateway_states(require_drain=True)
+        except SwitchError:
+            raise SwitchError('The gateway stopped holding new work. Nothing was switched; retry.') from None
+        if any(d['active_agents'] for _, d in states):
+            raise SwitchError('Gateway work started during the switch. Nothing was switched; retry when idle.')
+
     def stop(self):
         ensure_settings_unchanged()
+        if self.live:
+            self.stage('applying')
+            self.held_idle()
+            self.checkpoint('gateway_held')
+            return
         self.stage('restarting')
         states = gateway_states(require_drain=True) if self.gateway else []
         old_gateway_processes = [psutil.Process(d['pid']) for _, d in states]
@@ -1161,7 +1248,9 @@ class WindowsOps:
         if not allow_changed:
             ensure_settings_unchanged()
         self.stage('applying')
-        if service()['status'] != 'stopped' or any(process_alive(p) for p in self.old_tree):
+        if self.live:
+            self.held_idle()
+        elif service()['status'] != 'stopped' or any(process_alive(p) for p in self.old_tree):
             raise SwitchError('An old account consumer is still running; refusing to change credentials.')
         if request.get('codex'):
             target = request['codex']
@@ -1178,6 +1267,11 @@ class WindowsOps:
             apply_claude(request['claude'], allow_changed=allow_changed)
 
     def start(self):
+        if self.live:
+            # The stores are written and read back: release the held turns; each picks the new account up.
+            self.clear_drains()
+            self.checkpoint('gateway_released')
+            return
         self.stage('reopening')
         # Clear only our markers, before allowing the new gateway to accept work.
         self.clear_drains()
@@ -1192,6 +1286,11 @@ class WindowsOps:
         self.stage('verifying')
         codex_target = request.get('codex')
         claude_target = request.get('claude')
+        if self.live:
+            # Nothing restarted: the stores are the evidence, and the gateway reads them on its next turn.
+            result = {'new_desktop_pid': None, 'new_gateway_pid': None, 'gateway_pid': service()['pid'],
+                      'restarted': False, 'profiles': [{'profile': 'gateway', 'pid': service()['pid']}]}
+            return self.verify_stores(request, result)
         if self.hosted:
             # The gateway is the only account consumer; Desktop was never closed and reattaches by itself.
             if gateway_identity(service()) == self.old_gateway:
@@ -1290,7 +1389,8 @@ class WindowsOps:
         self.record.setdefault('failed_during', self.record.get('state'))
         self.record['recovery'] = 'not_needed'
         try:
-            if changed and service()['status'] == 'stopped':
+            # A live switch may write the old choice back only while turns are still held.
+            if changed and (service()['status'] == 'stopped' or (self.live and self.drained)):
                 self.apply({name: previous.get(name) for name in PROVIDERS}, allow_changed=True)
                 self.record['recovery'] = 'previous_preference_restored'
             elif changed:

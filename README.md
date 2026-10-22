@@ -7,14 +7,16 @@ open and reconnects. The status-bar dialog reports success only from a post-rest
 receipt: an accepted request is never treated as a completed switch.
 
 - Plugin ID: `account-switcher`
-- Version: **1.3.3** ([latest release](https://github.com/SmelterLabs/hermes-account-switcher/releases/latest))
+- Version: **1.4.0** ([latest release](https://github.com/SmelterLabs/hermes-account-switcher/releases/latest))
 - Platform: **Windows only**
 - Scope: local Hermes profiles on this machine. Remote machines, the standalone Codex app, and
   Claude Code's own sessions are not touched.
 
 ## Status
 
-Version **1.3.3** makes Codex switches take seconds instead of about a minute, and makes the
+Version **1.4.0** switches accounts without restarting anything on Hermes 0.22 and later: every chat
+uses the new accounts from its next message (a Claude switch needs the Claude provider 0.3.1 or later).
+1.3.3 made Codex switches take seconds instead of about a minute, and made the
 switch window calmer: old errors can be dismissed, the button reads "Switch completed" when a switch
 is done, the planned gateway restart shows a neutral note, and the window says when Hermes Desktop
 must be restarted to load an update. 1.3.2 stopped a dead gateway's leftover record from blocking

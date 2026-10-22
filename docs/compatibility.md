@@ -37,6 +37,7 @@ free to change them; the plugin checks each one before it acts and refuses when 
 | `hermes_cli.auth.read_credential_pool` | reading which logins exist |
 | `hermes_cli.config.save_env_value` / `remove_env_value` | writing one `.env` key per profile (Claude) |
 | Commands: `hermes auth priority`, `hermes auth reset`, `hermes gateway stop`, `hermes gateway start` | changing the login order; stopping and starting the gateway |
+| Command: `hermes config set plugins.entries.claude-subscription-directsdk-experimental.settings.claude_config_dir <folder>` | the Claude provider's per-profile login folder, read on every request (provider 0.3.1 on); lets a switch skip the restart |
 | The Claude subscription provider plugin (catalog name `claude-subscription-directsdk`, installed as `claude-subscription-directsdk-experimental`) and `CLAUDE_SUBSCRIPTION_DIRECTSDK_CONFIG_DIR` | the Claude path (a separate plugin); verified with its version 0.3.0 and Claude Code 2.1.284 |
 
 ## How an unsupported build fails

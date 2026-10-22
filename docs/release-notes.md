@@ -1,5 +1,26 @@
 # Release notes — Hermes Account Switcher
 
+## 1.4.0
+
+Switching no longer restarts anything on Hermes 0.22 and later. Installed on the owner's PC and used
+for a real switch before release.
+
+- **No restart on the unified gateway runtime.** The gateway reloads the Codex logins at the start of
+  every turn and rebuilds a chat's agent when the login changes, and the Claude subscription provider
+  (0.3.1 and later) reads its `claude_config_dir` setting on every request. So the switch now uses the
+  gateway's drain marker to stop new turns for the moment it takes, changes the stores while nothing
+  runs, reads them back, and lifts the marker. Hermes turns away a message sent during that moment
+  (send it again); every chat uses the new accounts from its next message. With an older Claude
+  provider, a switch that includes Claude still restarts the gateway, as before.
+- **Claude is now selected through the provider's own setting as well as `.env`.** The provider reads
+  `claude_config_dir` ahead of the `.env` variable, so a value someone had put there by hand used to make
+  a Claude switch silently do nothing while the dialog said it worked. The switch now writes both to
+  the same folder, and the selection shown is the one the provider actually uses.
+- **The button reads "Switch completed" only for a switch the window watched finish.** A finished
+  result read from disk when the window opens stays in the result note, but the button reads "Switch
+  account".
+- Trade-off: the first message after a switch cannot reuse the old account's prompt cache.
+
 ## 1.3.3
 
 Makes switching quicker and the switch window calmer. Tested on the owner's PC before release.

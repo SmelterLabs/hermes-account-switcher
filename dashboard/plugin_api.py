@@ -183,7 +183,7 @@ def _switch_bound(body):
     except FileExistsError:
         raise HTTPException(409, IN_PROGRESS) from None
     record = {'operation_id': operation_id, 'target': target, 'settings_sha256': settings_digest(), 'started_at': time.time(),
-              'state': 'accepted', 'message': f'Checking active work before restarting for {describe(target)}.'}
+              'state': 'accepted', 'message': f'Checking active work before switching to {describe(target)}.'}
     try:
         ops.atomic(ops.RECEIPT, record)
         pythonw = ops.runtime_python().with_name('pythonw.exe')

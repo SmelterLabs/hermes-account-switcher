@@ -60,7 +60,8 @@ def _main_bound(operation_id):
                  10, 'Worker is still attached to Desktop; no restart or switch was attempted.')
         evidence = switch_transaction(WindowsOps(record), record['target'])
         record.update(evidence)
-        record.update(state='complete', message=f"{describe(record['target'])} verified after restart.")
+        done = 'switched without a restart' if record.get('restarts') is False else 'verified after restart'
+        record.update(state='complete', message=f"{describe(record['target'])} {done}.")
     except BaseException as exc:
         # BaseException, not Exception: a Hermes import can end the process with SystemExit, and a receipt
         # left at "accepted" reads as pending forever. Only this plugin's own plain-language errors are shown;
