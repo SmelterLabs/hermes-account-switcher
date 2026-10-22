@@ -1,14 +1,18 @@
 name: Release
 
-# Publishes a GitHub release from an existing tag: builds the archive with build_release.py,
-# runs the backend tests on the extracted archive on Windows, and attaches the archive,
-# its SHA-256 and a gates file. Run it by hand from the Actions tab after pushing the tag.
+# Publishes a GitHub release: builds the archive with build_release.py from the chosen commit,
+# runs the backend tests on the extracted archive on Windows, creates the tag on that commit,
+# and attaches the archive, its SHA-256 and a gates file. Run it by hand from the Actions tab.
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to release, for example v1.3.3
+        description: Tag to create, for example v1.3.3 (must match plugin.yaml)
         required: true
+      commit:
+        description: Commit to release (full SHA or branch name)
+        required: true
+        default: main
       notes:
         description: Release notes (Markdown)
         required: true
@@ -31,7 +35,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: refs/tags/${{ inputs.tag }}
+          ref: ${{ inputs.commit }}
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
@@ -41,6 +45,7 @@ jobs:
           echo "plugin.yaml version: $version"
           test "v$version" = "$TAG"
           echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - name: Build the archive
         run: python build_release.py --output out
       - name: Run the backend tests on the extracted archive
@@ -63,7 +68,7 @@ jobs:
               'archive': os.path.basename(archive),
               'archive_sha256': open(archive[:-4] + '.sha256').read().split()[0],
               'archive_files': len(zipfile.ZipFile(archive).namelist()),
-              'public_commit': os.environ['GITHUB_SHA'],
+              'public_commit': os.environ['COMMIT'],
               'automated_tests': {'backend_on_the_extracted_archive': passed, 'pytest_summary': summary},
               'workflow_run': f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
           }
@@ -75,5 +80,5 @@ jobs:
       - name: Publish the release
         run: |
           printf '%s\n' "$NOTES" > notes.md
-          gh release create "$TAG" --verify-tag --title "Hermes Account Switcher $VERSION" --notes-file notes.md \
+          gh release create "$TAG" --target "$COMMIT" --title "Hermes Account Switcher $VERSION" --notes-file notes.md \
             "out/account-switcher-$VERSION.zip" "out/account-switcher-$VERSION.sha256" "out/release-$VERSION-gates.json"
