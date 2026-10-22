@@ -50,14 +50,19 @@ def test_preflight_uses_the_gateways_own_idle_proof(hosted, monkeypatch):
     idle_ledger(hosted, monkeypatch)
     result = ops.preflight(lambda: {'blockers': []})
     assert result['ok'] is True and result['blockers'] == [] and result['desktop_restarts'] is False
+    # A Codex switch needs no restart here, so running work does not block it outright (the worker waits for
+    # it); a prompt waiting on the person does, and a part of the switch that restarts waits for everything.
     busy = ops.preflight(lambda: {'blockers': ['A conversation is waiting for input.']})
-    assert busy['ok'] is False and busy['blockers'] == ['A conversation is waiting for input.']
+    assert busy['ok'] is True and busy['blockers'] == []
+    assert busy['blockers_codex'] == ['A conversation is waiting for input.']
+    assert busy['busy'] == ['A conversation is waiting for input.']
 
 
-def test_preflight_still_blocks_on_gateway_work_and_a_stopped_gateway(hosted, monkeypatch):
+def test_preflight_reports_gateway_work_and_blocks_a_stopped_gateway(hosted, monkeypatch):
     monkeypatch.setattr(ops, 'service', lambda: OLD)
     idle_ledger(hosted, monkeypatch, active=1)
-    assert not ops.preflight(lambda: {'blockers': []})['ok']
+    running = ops.preflight(lambda: {'blockers': []})
+    assert running['busy'] and running['blockers_codex'] == [] and running['blockers'] == []
     monkeypatch.setattr(ops, 'service', lambda: {'status': 'stopped', 'pid': None})
     idle_ledger(hosted, monkeypatch)
     assert 'The Hermes gateway is not running.' in ops.preflight(lambda: {'blockers': []})['blockers']

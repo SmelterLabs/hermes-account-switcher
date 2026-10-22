@@ -23,6 +23,10 @@ const CLAUDE_UNSET = ''
 // A switch takes 40 to 70 seconds; past this the dialog says what to do if Hermes does not come back.
 const RESTART_HINT_AFTER_MS = 180_000
 const RESTARTING_TEXT = 'The Hermes gateway is restarting as part of the switch. Connection errors from Hermes Desktop are expected until it is back.'
+// A Codex switch without a restart turns new messages away while it lets running replies finish; Hermes then
+// refuses every request, this dialog's status reads included, so the dialog says what it is waiting for.
+const WAITING_TEXT = 'Waiting for the current reply to finish, then switching. Hermes turns new messages away for this moment (up to a minute); send them again after.'
+const WAIT_SLOW_TEXT = 'This is taking longer than a switch should. Press Recheck; the receipt at <Hermes home>\\logs\\account-switcher-last.json says how the switch ended.'
 const RESTART_SLOW_TEXT = 'The Hermes gateway has not come back after 3 minutes, longer than a switch takes. Run hermes gateway status to see its state, or restart Hermes Desktop; the receipt at <Hermes home>\\logs\\account-switcher-last.json says how the switch ended.'
 
 function isAccountKey(value, accounts) {
@@ -141,6 +145,27 @@ function normalizeStatus(response) {
   }
 }
 
+function stringList(value) {
+  return Array.isArray(value) ? value.filter(item => typeof item === 'string' && item.trim()) : []
+}
+
+// What stops this particular switch: the general blockers plus those of each part being changed.
+function blockersFor(preflight, codexChanged, claudeChanged) {
+  if (!preflight) return []
+  return [...new Set([
+    ...preflight.blockers,
+    ...(codexChanged ? preflight.codexBlockers || [] : []),
+    ...(claudeChanged ? preflight.claudeBlockers || [] : [])
+  ])]
+}
+
+// Whether this particular switch restarts the gateway; with nothing chosen yet, whether any switch would.
+function switchRestarts(preflight, codexChanged, claudeChanged) {
+  if (!preflight) return true
+  if (!codexChanged && !claudeChanged) return preflight.restarts !== false
+  return Boolean((codexChanged && preflight.restartsFor?.codex) || (claudeChanged && preflight.restartsFor?.claude))
+}
+
 function normalizePreflight(response) {
   const shape = response && typeof response === 'object' && !Array.isArray(response)
   const selections = normalizeSelections(response)
@@ -151,6 +176,14 @@ function normalizePreflight(response) {
     desktopRestarts: response?.desktop_restarts !== false,
     // false when the switch applies without restarting anything (unified runtime, Claude provider 0.3.1 on).
     restarts: response?.restarts !== false,
+    // Per part of the switch: which one restarts, and what running work blocks it (see preflight in windows_ops).
+    restartsFor: {
+      codex: (response?.restarts_for?.codex ?? response?.restarts) !== false,
+      claude: (response?.restarts_for?.claude ?? response?.restarts) !== false
+    },
+    codexBlockers: stringList(response?.blockers_codex),
+    claudeBlockers: stringList(response?.blockers_claude),
+    busyWork: stringList(response?.busy),
     valid: Boolean(shape && selections.valid && Array.isArray(response.blockers) && typeof response.ok === 'boolean')
   }
 }
@@ -321,11 +354,20 @@ function SwitchDialog({
 }) {
   const pendingFromStatus = isPendingOperation(status.last_operation) || status.in_progress
   const pendingNotice = notice?.kind === 'pending'
-  const blockers = preflight?.blockers || []
-  const busy = localPending || pendingNotice || blockers.length > 0 || pendingFromStatus
   const current = preflight || status
   const codexChanged = isAccountKey(codexTarget, current.codex.accounts) && codexTarget !== current.codex.selected
   const claudeChanged = isAccountKey(claudeTarget, current.claude.accounts) && claudeTarget !== current.claude.selected
+  const blockers = blockersFor(preflight, codexChanged, claudeChanged)
+  const busy = localPending || pendingNotice || blockers.length > 0 || pendingFromStatus
+  const restartsNow = switchRestarts(preflight, codexChanged, claudeChanged)
+  const restartNote = !restartsNow
+    ? codexChanged
+      ? 'Nothing restarts. If Hermes is answering, the switch first lets that reply finish (up to a minute); messages sent in that moment are turned away, so send them again. Then every chat uses the new accounts from its next message'
+      : 'Nothing restarts and nothing is interrupted: every chat uses the new Claude account from its next message'
+    : preflight?.desktopRestarts === false
+      ? 'The Hermes gateway will restart and Hermes Desktop reconnects to it by itself'
+      : 'The Hermes gateway will restart and Hermes Desktop will close and reopen'
+  const waitsForReply = !restartsNow && codexChanged && (preflight?.busyWork || []).length > 0
   const canConfirm = checkState === 'ready' && !checkError && !busy && (codexChanged || claudeChanged)
   // A switch this dialog watched finish, with the dropdowns still showing what it switched to: say so on the button.
   // A receipt read from disk on opening the dialog is history, shown in the notice, not a button label.
@@ -357,7 +399,7 @@ function SwitchDialog({
                 children: [
                   jsx('span', {
                     className: 'block',
-                    children: `This changes the Codex and Claude accounts used by ${status.scope.charAt(0).toLowerCase()}${status.scope.slice(1)}. ${preflight?.restarts === false ? 'Nothing restarts. For the short moment the accounts take to change, Hermes turns new messages away (send them again after), and then every chat uses the new accounts from its next message' : preflight?.desktopRestarts === false ? 'The Hermes gateway will restart and Hermes Desktop reconnects to it by itself' : 'The Hermes gateway will restart and Hermes Desktop will close and reopen'}; saved conversations stay in place.`
+                    children: `This changes the Codex and Claude accounts used by ${status.scope.charAt(0).toLowerCase()}${status.scope.slice(1)}. ${restartNote}; saved conversations stay in place.`
                   }),
                   jsx('span', { className: 'block', children: 'Remote hosts, the standalone Codex app and Claude Code itself are unaffected.' })
                 ]
@@ -390,7 +432,11 @@ function SwitchDialog({
               className: `rounded-md border px-3 py-2 text-xs ${noticeClass(restarting.slow ? 'error' : 'pending')}`,
               role: restarting.slow ? 'alert' : 'status',
               children: [
-                jsx('div', { children: restarting.slow ? RESTART_SLOW_TEXT : RESTARTING_TEXT }, 'text')
+                jsx('div', {
+                  children: restarting.kind === 'wait'
+                    ? restarting.slow ? WAIT_SLOW_TEXT : WAITING_TEXT
+                    : restarting.slow ? RESTART_SLOW_TEXT : RESTARTING_TEXT
+                }, 'text')
               ]
             }, 'restarting')
           : null,
@@ -427,7 +473,9 @@ function SwitchDialog({
                     ? null
                     : jsx('p', {
                         className: 'text-xs text-(--ui-text-secondary)',
-                        children: codexChanged || claudeChanged ? 'No active Hermes work blocked the switch check.' : choiceHint(current, codexTarget, claudeTarget)
+                        children: codexChanged || claudeChanged
+                          ? waitsForReply ? 'Hermes is answering right now; the switch will wait for that reply to finish.' : 'No active Hermes work blocked the switch check.'
+                          : choiceHint(current, codexTarget, claudeTarget)
                       }, 'choice-hint'),
                 jsx(Button, { disabled: localPending, onClick: onRecheck, type: 'button', variant: 'secondary', children: 'Recheck' }, 'recheck')
               ]
@@ -624,6 +672,8 @@ function AccountStatusButton({ rest }) {
   // Read from the 10-second poll, whose closure is the first render's.
   const openRef = useRef(false)
   const awaitingResult = useRef(false)
+  // How the switch in flight runs: 'restart', 'wait' (Codex, no restart) or 'instant' (Claude only, no restart).
+  const switchKind = useRef('restart')
   // When this switch was first seen pending; a failed poll before that is a plain failure.
   const pendingSince = useRef(null)
   const [restarting, setRestarting] = useState(null)
@@ -664,7 +714,7 @@ function AccountStatusButton({ rest }) {
       // ("Gateway ticket bootstrap failed", "runtime_exited"). Keep the last status and say what is happening.
       if (awaitingResult.current && !(error instanceof RemoteChat)) {
         pendingSince.current ??= Date.now()
-        setRestarting({ slow: Date.now() - pendingSince.current >= RESTART_HINT_AFTER_MS })
+        setRestarting({ slow: Date.now() - pendingSince.current >= RESTART_HINT_AFTER_MS, kind: switchKind.current })
         setStatusError(null)
         return null
       }
@@ -781,7 +831,8 @@ function AccountStatusButton({ rest }) {
     if (isAccountKey(codexTarget, current.codex.accounts) && codexTarget !== current.codex.selected) body.codex = codexTarget
     if (isAccountKey(claudeTarget, current.claude.accounts) && claudeTarget !== current.claude.selected) body.claude = claudeTarget
     const allowed =
-      checkState === 'ready' && !checkError && !statusError && preflight && preflight.blockers.length === 0 &&
+      checkState === 'ready' && !checkError && !statusError && preflight &&
+      blockersFor(preflight, Boolean(body.codex), Boolean(body.claude)).length === 0 &&
       !isPendingOperation(status.last_operation) && !status.in_progress && !localPending && (body.codex || body.claude)
     if (!allowed) return
 
@@ -794,9 +845,13 @@ function AccountStatusButton({ rest }) {
       }
       awaitingResult.current = true
       pendingSince.current = Date.now()
+      const restarts = switchRestarts(preflight, Boolean(body.codex), Boolean(body.claude))
+      switchKind.current = restarts ? 'restart' : body.codex ? 'wait' : 'instant'
       setOperationNoticeState({
         kind: 'pending',
-        message: 'Switch request accepted, but it is still pending. The Hermes gateway and Hermes Desktop may close and reopen; the switch is only done after status reports Complete.'
+        message: restarts
+          ? 'Switch request accepted, but it is still pending. The Hermes gateway and Hermes Desktop may close and reopen; the switch is only done after status reports Complete.'
+          : 'Switch request accepted, but it is still pending. Nothing restarts; the switch is only done after status reports Complete.'
       })
     } catch (error) {
       setLocalPending(false)

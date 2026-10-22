@@ -310,3 +310,122 @@ def test_an_abandoned_live_switch_does_not_claim_hermes_was_closed(home, monkeyp
     record = json.loads(ops.RECEIPT.read_text())
     assert record['state'] == 'failed' and 'closed' not in record['message']
     assert 'Hermes was not restarted' in record['message']
+
+
+# ---------------------------------------------------------------- running work: block only what must wait
+
+def dialog_preflight(root, monkeypatch, version, own=(), active=0):
+    provider(root, version)
+    monkeypatch.setattr(ops, 'gateway_hosts_desktop', lambda: True)
+    monkeypatch.setattr(ops, 'selection_summary', lambda: {'codex': {'selected': 'personal'}, 'claude': {'selected': None, 'state': 'unset'}})
+    for name in ('plugin_profile_blockers', 'claude_provider_blockers', 'gateway_setting_blockers', 'stale_desktop_blockers'):
+        monkeypatch.setattr(ops, name, lambda: [])
+    monkeypatch.setattr(ops, 'service', lambda: RUNNING)
+    monkeypatch.setattr(ops, 'service_owns_gateway', lambda name: True)
+    held_ledger(root, monkeypatch, active=active, state='running')
+    return ops.preflight(lambda: {'blockers': list(own)})
+
+
+def test_running_work_blocks_neither_live_part(home, monkeypatch):
+    root, _ = home
+    result = dialog_preflight(root, monkeypatch, '0.3.3', own=['A conversation is running, initializing, or waiting for input.'], active=1)
+    assert result['ok'] is True and result['blockers'] == []
+    assert result['blockers_codex'] == [] and result['blockers_claude'] == []
+    assert len(result['busy']) == 2 and result['restarts_for'] == {'codex': False, 'claude': False}
+
+
+def test_a_prompt_waiting_on_the_person_blocks_only_codex(home, monkeypatch):
+    root, _ = home
+    result = dialog_preflight(root, monkeypatch, '0.3.3', own=['A conversation is waiting for input.'])
+    assert result['ok'] is True
+    assert result['blockers_codex'] == ['A conversation is waiting for input.'] and result['blockers_claude'] == []
+
+
+def test_a_claude_switch_that_restarts_still_waits_for_all_work(home, monkeypatch):
+    root, _ = home
+    result = dialog_preflight(root, monkeypatch, '0.3.0', active=1)
+    assert result['restarts_for'] == {'codex': False, 'claude': True}
+    assert result['blockers_claude'] == result['busy'] and result['busy'] and result['blockers_codex'] == []
+
+
+def worker_for(root, monkeypatch, version, request, busy=()):
+    provider(root, version)
+    monkeypatch.setattr(ops, 'gateway_hosts_desktop', lambda: True)
+    monkeypatch.setattr(ops, 'require_switch_interfaces', lambda: None)
+    monkeypatch.setattr(ops, 'service', lambda: RUNNING)
+    monkeypatch.setattr(ops, 'preflight', lambda own_state=None: {
+        'ok': True, 'blockers': [], 'busy': list(busy),
+        'codex': {'selected': 'personal'}, 'claude': {'selected': None, 'state': 'unset'}})
+    monkeypatch.setattr(ops, 'claude_identity', lambda key: {'email': 'x', 'method': 'token'})
+    monkeypatch.setattr(ops, 'accounts', lambda: {'work': {'expired': False}})
+    monkeypatch.setattr(ops, 'usage', lambda item: None)
+    worker = ops.WindowsOps({})
+    worker.preflight(request)
+    return worker
+
+
+def test_a_claude_only_live_switch_holds_nothing_and_runs_beside_a_reply(home, monkeypatch):
+    root, commands = home
+    worker = worker_for(root, monkeypatch, '0.3.3', {'codex': None, 'claude': 'gmail'}, busy=['default: gateway or scheduled work is active.'])
+    assert worker.live and not worker.hold and worker.record['holds_turns'] is False
+    held_ledger(root, monkeypatch, active=1, state='running')
+    monkeypatch.setattr(ops, 'drain_control', lambda: pytest.fail('a Claude-only live switch writes no drain marker'))
+    worker.freeze()
+    worker.stop()
+    worker.apply({'codex': None, 'claude': 'gmail'})
+    worker.start()
+    worker.unfreeze()
+    assert ops.claude_selection()['selected'] == 'gmail'
+
+
+def test_a_switch_that_restarts_still_refuses_while_work_runs(home, monkeypatch):
+    root, _ = home
+    with pytest.raises(SwitchError, match='gateway or scheduled work is active'):
+        worker_for(root, monkeypatch, '0.3.0', {'codex': None, 'claude': 'gmail'}, busy=['default: gateway or scheduled work is active.'])
+
+
+def test_a_live_codex_switch_holds_new_messages_and_waits_for_running_replies(home, monkeypatch):
+    root, _ = home
+    worker = worker_for(root, monkeypatch, '0.3.3', {'codex': 'work', 'claude': None}, busy=['default: gateway or scheduled work is active.'])
+    assert worker.live and worker.hold
+    written = []
+    monkeypatch.setattr(ops, 'drain_control', lambda: type('D', (), {
+        'drain_requested': staticmethod(lambda home: False),
+        'write_drain_request': staticmethod(lambda home, principal, suppress_notification: written.append(home))}))
+    counts = iter([1, 1, 1, 0])
+    current = {'active': 1}
+
+    def states(require_drain=False):
+        if require_drain:
+            current['active'] = next(counts, 0)
+        return [(root, {'pid': 50, 'gateway_state': 'draining', 'active_agents': current['active']})]
+    monkeypatch.setattr(ops, 'gateway_states', states)
+    monkeypatch.setattr(ops.time, 'sleep', lambda seconds: None)
+    worker.freeze()
+    assert written == [root] and 'waiting_for_replies' in [c['step'] for c in worker.record['checkpoints']]
+
+
+def test_a_live_codex_switch_gives_up_after_the_wait(home, monkeypatch):
+    root, _ = home
+    worker = worker_for(root, monkeypatch, '0.3.3', {'codex': 'work', 'claude': None})
+    monkeypatch.setattr(ops, 'drain_control', lambda: type('D', (), {
+        'drain_requested': staticmethod(lambda home: False),
+        'write_drain_request': staticmethod(lambda home, principal, suppress_notification: None)}))
+    held_ledger(root, monkeypatch, active=1)
+    clock = iter(range(0, 10_000, 5))
+    monkeypatch.setattr(ops.time, 'monotonic', lambda: next(clock))
+    monkeypatch.setattr(ops.time, 'sleep', lambda seconds: None)
+    with pytest.raises(SwitchError, match='still answering after a minute'):
+        worker.freeze()
+
+
+def test_a_claude_only_live_switch_restores_the_previous_choice_without_a_hold(home, monkeypatch):
+    root, _ = home
+    ops.apply_claude('gmail')
+    worker = live_worker(root, monkeypatch)
+    worker.hold = False
+    worker.drained = []
+    ops.apply_claude('work')
+    worker.recover({'claude': 'gmail'}, changed=True)
+    assert worker.record['recovery'] == 'previous_preference_restored'
+    assert ops.claude_selection()['selected'] == 'gmail'

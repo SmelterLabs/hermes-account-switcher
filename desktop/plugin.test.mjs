@@ -535,8 +535,64 @@ describe('account-switcher desktop plugin', () => {
   it('says nothing restarts when the backend can switch live', async () => {
     const rest = makeRest({ preflight: [{ ...preflightFor(STATUS_PERSONAL_IDLE), desktop_restarts: false, restarts: false }] })
     await openDialog(rest)
-    expect(screen.getByText(/Nothing restarts\. For the short moment the accounts take to change/i)).toBeTruthy()
+    expect(screen.getByText(/Nothing restarts and nothing is interrupted/i)).toBeTruthy()
     expect(screen.queryByText(/The Hermes gateway will restart/i)).toBeNull()
+  })
+
+  const LIVE = { desktop_restarts: false, restarts: false, restarts_for: { codex: false, claude: false } }
+
+  it('lets a live Codex switch go ahead while Hermes answers, and says it will wait', async () => {
+    const preflight = { ...preflightFor(STATUS_PERSONAL_IDLE), ...LIVE, busy: ['default: gateway or scheduled work is active.'] }
+    const rest = makeRest({ preflight: [preflight] })
+    await openDialog(rest)
+    fireEvent.change(screen.getByRole('combobox', { name: 'Target Codex account' }), { target: { value: 'work' } })
+    expect(screen.getByText(/the switch first lets that reply finish \(up to a minute\)/i)).toBeTruthy()
+    expect(screen.getByText(/the switch will wait for that reply to finish/i)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Switch account' }))
+    await waitFor(() => expect(count(rest, '/switch')).toBe(1))
+  })
+
+  it('blocks a Codex switch while a prompt waits on the person, but not a Claude-only one', async () => {
+    const waiting = 'A conversation is waiting for input.'
+    const preflight = { ...preflightFor(STATUS_PERSONAL_IDLE), ...LIVE, busy: [waiting], blockers_codex: [waiting] }
+    const rest = makeRest({ preflight: [preflight] })
+    await openDialog(rest)
+    fireEvent.change(screen.getByRole('combobox', { name: 'Target Codex account' }), { target: { value: 'work' } })
+    expect(screen.getByText(waiting)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Switch account' }).disabled).toBe(true)
+    fireEvent.change(screen.getByRole('combobox', { name: 'Target Codex account' }), { target: { value: 'personal' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Target Claude account' }), { target: { value: 'gmail' } })
+    expect(screen.queryByText(waiting)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Switch account' }))
+    await waitFor(() => expect(count(rest, '/switch')).toBe(1))
+  })
+
+  it('says it is waiting for the reply, not restarting, while a live Codex switch holds Hermes', async () => {
+    let down = false
+    const base = makeRest({ preflight: [{ ...preflightFor(STATUS_PERSONAL_IDLE), ...LIVE }] })
+    const rest = async (path, opts) => {
+      if (down && path === '/status') { base.calls.push({ path, opts }); throw new Error('gateway_not_ready') }
+      return base(path, opts)
+    }
+    rest.calls = base.calls
+    const originalSetInterval = window.setInterval
+    const scheduled = []
+    window.setInterval = (callback, interval) => {
+      scheduled.push({ callback, interval })
+      return originalSetInterval(callback, interval)
+    }
+    try {
+      await openDialog(rest)
+      fireEvent.change(screen.getByRole('combobox', { name: 'Target Codex account' }), { target: { value: 'work' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Switch account' }))
+      expect(await screen.findByText(/Nothing restarts; the switch is only done/i)).toBeTruthy()
+      down = true
+      scheduled.find(item => item.interval === 10_000).callback()
+      expect(await screen.findByText(/Waiting for the current reply to finish, then switching/)).toBeTruthy()
+      expect(screen.queryByText(/restarting as part of the switch/)).toBeNull()
+    } finally {
+      window.setInterval = originalSetInterval
+    }
   })
 
   it('keeps the restart notice when the backend does not report a live switch', async () => {

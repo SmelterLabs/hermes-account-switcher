@@ -6,7 +6,7 @@ not been proven is in [docs/acceptance.md](docs/acceptance.md).
 
 ## What this is
 
-A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.4.0)
+A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.4.1)
 that switches which Codex login and which Claude subscription account every local Hermes profile
 on the PC uses, through one idle-only, verified restart. It began as a private tool tailored to
 one machine and is packaged here for anyone. **The working behavior was preserved, not
@@ -69,8 +69,12 @@ because the gateway re-resolves credentials every turn (`gateway/run_turn_prepar
 hashes the full credential (`gateway/run_agent_cache.py`, `_agent_config_signature`), while the provider
 reads `plugins.entries.claude-subscription-directsdk-experimental.settings.claude_config_dir` on every
 spawn. The hold matters: Hermes's pool writer does not merge `priority` from disk, so a turn still running
-on an old copy of the pool could write the old order back on a token refresh or a rate limit. Recovery
-may write the previous choice back only while turns are still held. Receipts carry `restarts: false`.
+on an old copy of the pool could write the old order back on a token refresh or a rate limit. Running work: a Claude-only live switch
+writes no drain and needs no idle gateway (`WindowsOps.hold` is false), because no running turn writes
+the Claude setting back. A live Codex switch drains, then polls the ledger every half second for up to
+`CODEX_IDLE_WAIT` (60 s) until no turn runs. `/preflight` returns `busy` and per-part `blockers_codex` /
+`blockers_claude` so the dialog blocks only the part that must wait. Recovery
+may write the previous choice back only while turns are still held, or when nothing was held. Receipts carry `restarts: false`.
 
 **Unified gateway runtime (Hermes v0.22 on, `compat.gateway_hosts_desktop()`):** Hermes Desktop
 starts no backend; it attaches to the gateway, which serves this plugin and runs every turn. Steps 2,
@@ -247,7 +251,7 @@ the interface suite on Linux, on every push to `main` and every pull request. Te
 Windows APIs or drive-letter paths carry `@pytest.mark.windows` and are skipped on other systems,
 so only the Windows job proves them.
 
-Current counts: 374 backend, 46 interface. The 1.2.3 runtime support was proven on the owner's
+Current counts: 382 backend, 49 interface. The 1.2.3 runtime support was proven on the owner's
 PC with one real switch: `docs/receipts/2026-10-17-unified-runtime-owner-pc.json`. Live evidence and what is still not run:
 [docs/acceptance.md](docs/acceptance.md).
 
