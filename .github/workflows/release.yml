@@ -53,6 +53,11 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.13'
+      - name: Check every version string matches plugin.yaml
+        if: steps.plan.outputs.go == 'true'
+        run: |
+          python -m pip install -q -r requirements-test.lock
+          python -m pytest tests/test_version_consistency.py -q -p no:cacheprovider
       - name: Build the archive
         if: steps.plan.outputs.go == 'true'
         run: python build_release.py --output out
