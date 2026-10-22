@@ -86,7 +86,11 @@ def status(request: Request):
             ops.recover_abandoned_check()
             last = json.loads(ops.RECEIPT.read_text()) if ops.RECEIPT.is_file() else None
             in_progress = ops.LOCK.exists()
-            return {**ops.selection_summary(), 'last_operation': last, 'in_progress': in_progress,
+            summary = ops.selection_summary()
+            warning = ops.revert_warning(last, summary)
+            if warning:
+                summary['codex']['warnings'] = [*summary['codex']['warnings'], warning]
+            return {**summary, 'last_operation': last, 'in_progress': in_progress,
                     'blockers': [IN_PROGRESS] if in_progress else [], 'scope': SCOPE}
     except SettingsError as exc:
         # No settings file yet is not a failure: it is where every install starts.

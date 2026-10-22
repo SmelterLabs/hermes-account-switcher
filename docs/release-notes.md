@@ -1,5 +1,25 @@
 # Release notes — Hermes Account Switcher
 
+## 1.4.2
+
+A Codex switch no longer waits for Hermes to finish what it is doing. Installed on the owner's PC and
+used for a switch during a working agent session before release.
+
+- **Codex switches at once, even mid-session.** A switch without a restart no longer holds Hermes or waits
+  for running work, so it no longer gives up after a minute during a long agent session, and no message is
+  turned away. A reply already running finishes on the account it started with; every chat uses the new
+  account from its next message. A prompt waiting on you no longer blocks it either.
+- **The switch puts your choice back if a running session undoes it.** A session that was running when you
+  switched can save the old Codex order back when it renews a login or hits a rate limit. The switch keeps
+  watching after it reports done, and puts the account you chose back first within seconds, each time
+  noted in the receipt. It stops once the work that was running has finished, the gateway restarts,
+  another switch starts, or after two hours.
+- **The window warns if Codex is on the old account again.** If the account the last switch moved away
+  from is first again, the Codex warning says so and asks you to switch again.
+- A switch that restarts the gateway (Claude provider older than 0.3.1) still refuses while anything runs.
+- Known limit: the switch itself takes about a minute on a PC with many profiles, because Hermes's own
+  commands run once per profile. Chats keep working meanwhile; a faster apply is planned.
+
 ## 1.4.1
 
 Running work no longer blocks a switch that restarts nothing. Installed on the owner's PC and both

@@ -54,6 +54,15 @@ def test_status_contract_and_secret_allowlist(client, monkeypatch):
     assert 'access_token' not in response.text and 'account-one' not in response.text
 
 
+def test_status_warns_when_codex_tries_the_account_the_last_switch_left(client, monkeypatch):
+    api.ops.atomic(api.ops.RECEIPT, {'operation_id': 'op', 'state': 'complete', 'target': {'codex': 'work', 'claude': None},
+                                     'previous': {'codex': 'personal'}})
+    monkeypatch.setattr(api.ops, 'EMAILS', {'personal': 'me@home', 'work': 'me@work'})
+    data = client.get('/status').json()
+    assert data['codex']['selected'] == 'personal'
+    assert any('Switch again' in text for text in data['codex']['warnings'])
+
+
 def test_missing_setup_returns_guidance_without_reading_auth(client, monkeypatch, tmp_path):
     monkeypatch.setattr(api.ops, 'bound_settings', REAL_BOUND_SETTINGS)
     monkeypatch.setenv('HERMES_SWITCH_SETTINGS', str(tmp_path / 'absent.json'))

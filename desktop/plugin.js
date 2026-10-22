@@ -23,10 +23,9 @@ const CLAUDE_UNSET = ''
 // A switch takes 40 to 70 seconds; past this the dialog says what to do if Hermes does not come back.
 const RESTART_HINT_AFTER_MS = 180_000
 const RESTARTING_TEXT = 'The Hermes gateway is restarting as part of the switch. Connection errors from Hermes Desktop are expected until it is back.'
-// A Codex switch without a restart turns new messages away while it lets running replies finish; Hermes then
-// refuses every request, this dialog's status reads included, so the dialog says what it is waiting for.
-const WAITING_TEXT = 'Waiting for the current reply to finish, then switching. Hermes turns new messages away for this moment (up to a minute); send them again after.'
-const WAIT_SLOW_TEXT = 'This is taking longer than a switch should. Press Recheck; the receipt at <Hermes home>\\logs\\account-switcher-last.json says how the switch ended.'
+// A switch without a restart holds nothing, so a failed status read mid-switch is only a missed poll.
+const SWITCHING_TEXT = 'Switching accounts. Hermes did not answer the last status check; checking again.'
+const SWITCH_SLOW_TEXT = 'This is taking longer than a switch should. Press Recheck; the receipt at <Hermes home>\\logs\\account-switcher-last.json says how the switch ended.'
 const RESTART_SLOW_TEXT = 'The Hermes gateway has not come back after 3 minutes, longer than a switch takes. Run hermes gateway status to see its state, or restart Hermes Desktop; the receipt at <Hermes home>\\logs\\account-switcher-last.json says how the switch ended.'
 
 function isAccountKey(value, accounts) {
@@ -362,12 +361,12 @@ function SwitchDialog({
   const restartsNow = switchRestarts(preflight, codexChanged, claudeChanged)
   const restartNote = !restartsNow
     ? codexChanged
-      ? 'Nothing restarts. If Hermes is answering, the switch first lets that reply finish (up to a minute); messages sent in that moment are turned away, so send them again. Then every chat uses the new accounts from its next message'
+      ? 'Nothing restarts and nothing is interrupted: a reply already running finishes on the account it started with, and every chat uses the new accounts from its next message'
       : 'Nothing restarts and nothing is interrupted: every chat uses the new Claude account from its next message'
     : preflight?.desktopRestarts === false
       ? 'The Hermes gateway will restart and Hermes Desktop reconnects to it by itself'
       : 'The Hermes gateway will restart and Hermes Desktop will close and reopen'
-  const waitsForReply = !restartsNow && codexChanged && (preflight?.busyWork || []).length > 0
+  const runsBesideWork = !restartsNow && codexChanged && (preflight?.busyWork || []).length > 0
   const canConfirm = checkState === 'ready' && !checkError && !busy && (codexChanged || claudeChanged)
   // A switch this dialog watched finish, with the dropdowns still showing what it switched to: say so on the button.
   // A receipt read from disk on opening the dialog is history, shown in the notice, not a button label.
@@ -419,7 +418,7 @@ function SwitchDialog({
               className: 'rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive',
               role: 'alert',
               children: [
-                jsx('div', { className: 'font-medium', children: 'Codex login problem' }, 'title'),
+                jsx('div', { className: 'font-medium', children: 'Codex needs attention' }, 'title'),
                 jsx('ul', { className: 'mt-1 list-disc pl-4', children: status.codex.warnings.map(text => jsx('li', { children: text }, text)) }, 'list')
               ]
             }, 'codex-warnings')
@@ -433,8 +432,8 @@ function SwitchDialog({
               role: restarting.slow ? 'alert' : 'status',
               children: [
                 jsx('div', {
-                  children: restarting.kind === 'wait'
-                    ? restarting.slow ? WAIT_SLOW_TEXT : WAITING_TEXT
+                  children: restarting.kind === 'instant'
+                    ? restarting.slow ? SWITCH_SLOW_TEXT : SWITCHING_TEXT
                     : restarting.slow ? RESTART_SLOW_TEXT : RESTARTING_TEXT
                 }, 'text')
               ]
@@ -474,7 +473,7 @@ function SwitchDialog({
                     : jsx('p', {
                         className: 'text-xs text-(--ui-text-secondary)',
                         children: codexChanged || claudeChanged
-                          ? waitsForReply ? 'Hermes is answering right now; the switch will wait for that reply to finish.' : 'No active Hermes work blocked the switch check.'
+                          ? runsBesideWork ? 'Hermes is working right now; that reply finishes on the old Codex account and the next one uses the new account.' : 'No active Hermes work blocked the switch check.'
                           : choiceHint(current, codexTarget, claudeTarget)
                       }, 'choice-hint'),
                 jsx(Button, { disabled: localPending, onClick: onRecheck, type: 'button', variant: 'secondary', children: 'Recheck' }, 'recheck')
@@ -672,7 +671,7 @@ function AccountStatusButton({ rest }) {
   // Read from the 10-second poll, whose closure is the first render's.
   const openRef = useRef(false)
   const awaitingResult = useRef(false)
-  // How the switch in flight runs: 'restart', 'wait' (Codex, no restart) or 'instant' (Claude only, no restart).
+  // How the switch in flight runs: 'restart' or 'instant' (no restart).
   const switchKind = useRef('restart')
   // When this switch was first seen pending; a failed poll before that is a plain failure.
   const pendingSince = useRef(null)
@@ -846,7 +845,7 @@ function AccountStatusButton({ rest }) {
       awaitingResult.current = true
       pendingSince.current = Date.now()
       const restarts = switchRestarts(preflight, Boolean(body.codex), Boolean(body.claude))
-      switchKind.current = restarts ? 'restart' : body.codex ? 'wait' : 'instant'
+      switchKind.current = restarts ? 'restart' : 'instant'
       setOperationNoticeState({
         kind: 'pending',
         message: restarts

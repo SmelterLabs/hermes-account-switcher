@@ -6,7 +6,7 @@ not been proven is in [docs/acceptance.md](docs/acceptance.md).
 
 ## What this is
 
-A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.4.1)
+A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.4.2)
 that switches which Codex login and which Claude subscription account every local Hermes profile
 on the PC uses, through one idle-only, verified restart. It began as a private tool tailored to
 one machine and is packaged here for anyone. **The working behavior was preserved, not
@@ -61,25 +61,35 @@ The release is a "unified package": backend code under
    identity again. Only then does the receipt say `state: complete`.
 
 **Live switch (no restart; `live_switch_possible()`):** on the unified runtime, when the request has no
-Claude part or the Claude provider is 0.3.1 or later, nothing restarts. `stop()` only re-proves that every
-gateway holds new turns (drain acknowledged) and runs none; `apply()` checks that again before writing;
-`start()` releases the hold; `verify()` reads the stores back and re-checks the Claude identity. It is safe
-because the gateway re-resolves credentials every turn (`gateway/run_turn_prepare.py`,
+Claude part or the Claude provider is 0.3.1 or later, nothing restarts and nothing is held: no drain marker,
+no idle gate, and running work blocks neither part. `stop()` and `start()` only move the stage; `apply()`
+writes the stores beside running turns; `verify()` reads them back and re-checks the Claude identity. It
+works because the gateway re-resolves credentials every turn (`gateway/run_turn_prepare.py`,
 `_resolve_session_agent_runtime` → `load_pool`, which reads `auth.json` fresh) and its agent cache key
 hashes the full credential (`gateway/run_agent_cache.py`, `_agent_config_signature`), while the provider
 reads `plugins.entries.claude-subscription-directsdk-experimental.settings.claude_config_dir` on every
-spawn. The hold matters: Hermes's pool writer does not merge `priority` from disk, so a turn still running
-on an old copy of the pool could write the old order back on a token refresh or a rate limit. Running work: a Claude-only live switch
-writes no drain and needs no idle gateway (`WindowsOps.hold` is false), because no running turn writes
-the Claude setting back. A live Codex switch drains, then polls the ledger every half second for up to
-`CODEX_IDLE_WAIT` (60 s) until no turn runs. `/preflight` returns `busy` and per-part `blockers_codex` /
-`blockers_claude` so the dialog blocks only the part that must wait. Recovery
-may write the previous choice back only while turns are still held, or when nothing was held. Receipts carry `restarts: false`.
+spawn. A turn already running finishes on the account it started with.
+
+**The watch after a live Codex switch (`guard_codex_order`):** Hermes's pool writer keeps the in-memory
+order (`hermes_cli/auth.py` `write_credential_pool`), so a turn that was running at the switch writes the
+old order back if it persists its pool: on a token renewal, a rate limit, a dead login or a restored quota
+(`agent/credential_pool.py` `_persist`; ordinary fill-first selection never writes). So `verify()` adds a
+`guard` to the receipt, and the worker, after it has written `state: complete` and freed the lock, polls the
+stores every 0.25 s. A store whose first choice is exactly the previous account again is put back with one
+`hermes auth priority` (no reset), read back and logged in `guard.repairs` (time, profiles, seconds, ok). No
+other change is touched. The watch ends (`guard.ended`) when the gateway ledger shows no running work
+(`work_finished`; read before the stores, since a turn writes its pool before it stops counting), when the
+gateway restarts, when another switch takes the receipt or lock (`another_switch`), after
+`GUARD_MAX_REPAIRS` (5) repairs (`too_many_reverts`), or after `GUARD_SECONDS` (2 h). A repair takes the few
+seconds Hermes's command needs; a turn that starts in that window reads the old order. `/status` adds a
+Codex warning whenever the last completed switch's previous account is first again (`revert_warning`), so a
+revert the watch missed (worker stopped, PC asleep) is visible. Recovery writes the previous choice back
+the same way the switch wrote the new one. Receipts carry `restarts: false`.
 
 **Unified gateway runtime (Hermes v0.22 on, `compat.gateway_hosts_desktop()`):** Hermes Desktop
 starts no backend; it attaches to the gateway, which serves this plugin and runs every turn. Steps 2,
-3, 5 and 6 then touch only the gateway: the idle proof is the gateway's own (in-process), the drain
-acknowledgement holds every turn, Desktop is never closed or reopened (it reattaches by itself), and
+3, 5 and 6 then touch only the gateway: the idle proof is the gateway's own (in-process), a restart
+drains every turn first, Desktop is never closed or reopened (it reattaches by itself), and
 verification is a new gateway identity plus the stored selections. Preflight and receipt carry
 `desktop_restarts: false`. Proven on the owner PC 2026-10-17 (operation `64bc43ff…`, Claude →
 gmail, gateway 20552 → 45320 under `HermesGateway`, Desktop PID unchanged).
@@ -251,7 +261,7 @@ the interface suite on Linux, on every push to `main` and every pull request. Te
 Windows APIs or drive-letter paths carry `@pytest.mark.windows` and are skipped on other systems,
 so only the Windows job proves them.
 
-Current counts: 382 backend, 49 interface. The 1.2.3 runtime support was proven on the owner's
+Current counts: 391 backend, 49 interface. The 1.2.3 runtime support was proven on the owner's
 PC with one real switch: `docs/receipts/2026-10-17-unified-runtime-owner-pc.json`. Live evidence and what is still not run:
 [docs/acceptance.md](docs/acceptance.md).
 

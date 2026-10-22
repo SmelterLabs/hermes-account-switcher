@@ -255,3 +255,50 @@ def test_the_worker_gets_one_hidden_console_that_everything_it_starts_shares(mon
     assert flags & subprocess.CREATE_BREAKAWAY_FROM_JOB and flags & subprocess.CREATE_NEW_PROCESS_GROUP
     (tmp_path / 'python.exe').unlink()
     assert worker_launch.worker_start()[0] == str(tmp_path / 'pythonw.exe')
+
+
+def test_a_live_codex_switch_is_reported_complete_and_unlocked_before_its_watch(operation, monkeypatch):
+    receipt, lock = operation
+    monkeypatch.setattr(worker.psutil, 'Process', lambda: SimpleNamespace(parents=lambda: []))
+
+    def live_switch(ops_object, target):
+        ops_object.record.update(restarts=False, guard={'state': 'watching', 'target': 'work',
+                                                        'previous': 'personal', 'repairs': []})
+        return {'codex': 'work'}
+    monkeypatch.setattr(worker, 'switch_transaction', live_switch)
+    seen = []
+
+    def guard(record):
+        final = json.loads(receipt.read_text())
+        seen.append((final['state'], lock.exists()))
+        record['guard'].update(state='done', ended='work_finished')
+    monkeypatch.setattr(worker.ops, 'guard_codex_order', guard)
+    worker.main('test')
+    assert seen == [('complete', False)]
+
+
+def test_a_failing_watch_is_recorded_without_touching_the_switch_result(operation, monkeypatch):
+    receipt, lock = operation
+    monkeypatch.setattr(worker.psutil, 'Process', lambda: SimpleNamespace(parents=lambda: []))
+
+    def live_switch(ops_object, target):
+        ops_object.record.update(restarts=False, guard={'state': 'watching', 'target': 'work',
+                                                        'previous': 'personal', 'repairs': []})
+        return {'codex': 'work'}
+    monkeypatch.setattr(worker, 'switch_transaction', live_switch)
+
+    def broken(record): raise RuntimeError('private-watch-text')
+    monkeypatch.setattr(worker.ops, 'guard_codex_order', broken)
+    worker.main('test')
+    final = json.loads(receipt.read_text())
+    assert final['state'] == 'complete' and final['guard']['ended'] == 'error'
+    assert 'private-watch-text' not in receipt.read_text()
+
+
+def test_a_switch_without_a_codex_change_is_not_watched(operation, monkeypatch):
+    receipt, lock = operation
+    monkeypatch.setattr(worker.psutil, 'Process', lambda: SimpleNamespace(parents=lambda: []))
+    monkeypatch.setattr(worker, 'switch_transaction', lambda *a: {'codex': 'work'})
+    monkeypatch.setattr(worker.ops, 'guard_codex_order', lambda record: pytest.fail('nothing to watch'))
+    worker.main('test')
+    assert json.loads(receipt.read_text())['state'] == 'complete'
