@@ -6,7 +6,7 @@ not been proven is in [docs/acceptance.md](docs/acceptance.md).
 
 ## What this is
 
-A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.3.3)
+A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.4.0)
 that switches which Codex login and which Claude subscription account every local Hermes profile
 on the PC uses, through one idle-only, verified restart. It began as a private tool tailored to
 one machine and is packaged here for anyone. **The working behavior was preserved, not
@@ -247,7 +247,7 @@ the interface suite on Linux, on every push to `main` and every pull request. Te
 Windows APIs or drive-letter paths carry `@pytest.mark.windows` and are skipped on other systems,
 so only the Windows job proves them.
 
-Current counts: 371 backend, 46 interface. The 1.2.3 runtime support was proven on the owner's
+Current counts: 374 backend, 46 interface. The 1.2.3 runtime support was proven on the owner's
 PC with one real switch: `docs/receipts/2026-10-17-unified-runtime-owner-pc.json`. Live evidence and what is still not run:
 [docs/acceptance.md](docs/acceptance.md).
 
