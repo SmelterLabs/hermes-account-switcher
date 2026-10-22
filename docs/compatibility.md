@@ -36,7 +36,7 @@ free to change them; the plugin checks each one before it acts and refuses when 
 | Hermes's web-server authentication on every plugin route | the plugin's routes answer only to Hermes's own signed-in Desktop; the plugin adds a loopback check |
 | `hermes_cli.auth.read_credential_pool` | reading which logins exist |
 | `hermes_cli.config.save_env_value` / `remove_env_value` | writing one `.env` key per profile (Claude) |
-| Commands: `hermes auth priority`, `hermes auth reset`, `hermes gateway stop`, `hermes gateway start` | changing the login order; stopping and starting the gateway |
+| Commands: `hermes auth priority`, `hermes auth reset`, `hermes gateway stop`, `hermes gateway start` | changing the login order (and putting it back after a Codex switch if a running turn writes the old one); stopping and starting the gateway |
 | Command: `hermes config set plugins.entries.claude-subscription-directsdk-experimental.settings.claude_config_dir <folder>` | the Claude provider's per-profile login folder, read on every request (provider 0.3.1 on); lets a switch skip the restart |
 | The Claude subscription provider plugin (catalog name `claude-subscription-directsdk`, installed as `claude-subscription-directsdk-experimental`) and `CLAUDE_SUBSCRIPTION_DIRECTSDK_CONFIG_DIR` | the Claude path (a separate plugin); verified with its version 0.3.0 and Claude Code 2.1.284 |
 
@@ -81,8 +81,9 @@ answer and the Desktop window closing are not guarded.
 - **No health address is served** by the gateway unless the user turned the API server on. The
   plugin reads the gateway's own status record instead.
 - **Older builds refreshed the gateway's count of active work only while a drain was requested**,
-  so the idle check before a switch could read an old busy count and refuse. That is the safe
-  direction; it was not seen on the verified builds.
+  so the idle check before a switch could read an old busy count and refuse, and the watch after a
+  Codex switch could run on to its two-hour limit. Both are the safe direction; neither was seen on the
+  verified builds.
 - **Hermes logs "Failed to load plugin 'account-switcher': No `__init__.py`" at every start.**
   The plugin has no Python entry point for Hermes's general loader; its backend is loaded as a
   dashboard plugin. The message is harmless.

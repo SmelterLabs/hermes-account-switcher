@@ -50,11 +50,11 @@ def test_preflight_uses_the_gateways_own_idle_proof(hosted, monkeypatch):
     idle_ledger(hosted, monkeypatch)
     result = ops.preflight(lambda: {'blockers': []})
     assert result['ok'] is True and result['blockers'] == [] and result['desktop_restarts'] is False
-    # A Codex switch needs no restart here, so running work does not block it outright (the worker waits for
-    # it); a prompt waiting on the person does, and a part of the switch that restarts waits for everything.
+    # A Codex switch needs no restart here, so running work, even a prompt waiting on the person, blocks
+    # nothing: the switch applies beside it. A part of the switch that restarts waits for everything.
     busy = ops.preflight(lambda: {'blockers': ['A conversation is waiting for input.']})
     assert busy['ok'] is True and busy['blockers'] == []
-    assert busy['blockers_codex'] == ['A conversation is waiting for input.']
+    assert busy['blockers_codex'] == []
     assert busy['busy'] == ['A conversation is waiting for input.']
 
 

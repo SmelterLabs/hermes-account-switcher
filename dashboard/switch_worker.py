@@ -87,6 +87,15 @@ def _main_bound(operation_id):
         ops.atomic(ops.RECEIPT, record)
         if ops.LOCK.exists() and json.loads(ops.LOCK.read_text()).get('operation_id') == operation_id:
             ops.LOCK.unlink()
+    # A live Codex switch is reported complete, and the lock is free for the next switch, before this watch:
+    # it only puts the new order back if a turn that was already running writes the old one.
+    if record.get('state') == 'complete' and (record.get('guard') or {}).get('state') == 'watching':
+        try:
+            ops.guard_codex_order(record)
+        except BaseException as exc:
+            record['guard'].update(state='done', ended='error', error=failure_details(exc))
+            if ops.owns_receipt(operation_id):
+                ops.atomic(ops.RECEIPT, record)
 
 
 if __name__ == '__main__':

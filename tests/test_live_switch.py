@@ -5,7 +5,8 @@ Why it is safe without a restart (checked against upstream Hermes and the Claude
   cached agent when the login changes, so a new priority order applies from the next turn.
 - Claude: provider 0.3.1 on reads its per-profile ``claude_config_dir`` setting from config.yaml on every
   spawn, ahead of the ``.env`` variable, which is only read when the gateway starts.
-The drain marker still holds new turns while the stores change, so no turn can write a stale order back."""
+Nothing is held: a turn already running finishes on its account, and an old Codex order it writes back is put
+right by the worker's watch (guard_codex_order)."""
 import json
 import sys
 from pathlib import Path
@@ -169,35 +170,23 @@ def live_worker(root, monkeypatch):
 
 def test_live_stop_and_start_never_touch_the_gateway(home, monkeypatch):
     root, commands = home
-    held_ledger(root, monkeypatch)
-    cleared = []
-    monkeypatch.setattr(ops, 'drain_control', lambda: type('D', (), {
-        'read_drain_request': staticmethod(lambda home: {'principal': 'account-switcher'}),
-        'clear_drain_request': staticmethod(lambda home: cleared.append(home))}))
+    monkeypatch.setattr(ops, 'drain_control', lambda: pytest.fail('a live switch writes no drain marker'))
     worker = live_worker(root, monkeypatch)
+    worker.drained = []
+    worker.freeze()
     worker.stop()
-    assert commands == [] and not worker.stopped
-    assert [step['step'] for step in worker.record['checkpoints']] == ['gateway_held']
+    assert commands == [] and not worker.stopped and 'checkpoints' not in worker.record
     worker.start()
-    assert commands == [] and cleared == [root] and worker.drained == []
-
-
-def test_live_apply_refuses_while_a_turn_is_running(home, monkeypatch):
-    root, commands = home
-    held_ledger(root, monkeypatch, active=1)
-    worker = live_worker(root, monkeypatch)
-    with pytest.raises(SwitchError, match='Nothing was switched'):
-        worker.apply({'codex': None, 'claude': 'gmail'})
+    worker.unfreeze()
     assert commands == []
 
 
-def test_live_apply_refuses_when_the_hold_was_released(home, monkeypatch):
-    root, commands = home
-    held_ledger(root, monkeypatch, state='running')
+def test_live_apply_runs_beside_a_running_turn(home, monkeypatch):
+    root, _ = home
+    held_ledger(root, monkeypatch, active=1, state='running')
     worker = live_worker(root, monkeypatch)
-    with pytest.raises(SwitchError):
-        worker.apply({'codex': None, 'claude': 'gmail'})
-    assert commands == []
+    worker.apply({'codex': None, 'claude': 'gmail'})
+    assert ops.claude_selection()['selected'] == 'gmail'
 
 
 def test_live_apply_changes_the_stores_with_the_gateway_running(home, monkeypatch):
@@ -223,7 +212,7 @@ def test_live_verify_needs_no_new_gateway(home, monkeypatch):
         worker.verify({'codex': 'work', 'claude': None})
 
 
-def test_live_recovery_restores_the_previous_choice_while_turns_are_still_held(home, monkeypatch):
+def test_live_recovery_restores_the_previous_choice(home, monkeypatch):
     root, _ = home
     held_ledger(root, monkeypatch)
     ops.apply_claude('gmail')
@@ -233,14 +222,6 @@ def test_live_recovery_restores_the_previous_choice_while_turns_are_still_held(h
     worker.recover({'claude': 'gmail'}, changed=True)
     assert worker.record['recovery'] == 'previous_preference_restored'
     assert ops.claude_selection()['selected'] == 'gmail'
-
-
-def test_live_recovery_keeps_the_new_choice_once_turns_were_released(home, monkeypatch):
-    root, _ = home
-    worker = live_worker(root, monkeypatch)
-    worker.drained = []
-    worker.recover({'claude': 'gmail'}, changed=True)
-    assert worker.record['recovery'].startswith('new_preference_retained')
 
 
 def test_the_transaction_runs_the_live_steps_in_the_same_order(home, monkeypatch):
@@ -334,11 +315,11 @@ def test_running_work_blocks_neither_live_part(home, monkeypatch):
     assert len(result['busy']) == 2 and result['restarts_for'] == {'codex': False, 'claude': False}
 
 
-def test_a_prompt_waiting_on_the_person_blocks_only_codex(home, monkeypatch):
+def test_a_prompt_waiting_on_the_person_blocks_no_live_part(home, monkeypatch):
     root, _ = home
     result = dialog_preflight(root, monkeypatch, '0.3.3', own=['A conversation is waiting for input.'])
     assert result['ok'] is True
-    assert result['blockers_codex'] == ['A conversation is waiting for input.'] and result['blockers_claude'] == []
+    assert result['blockers_codex'] == [] and result['blockers_claude'] == []
 
 
 def test_a_claude_switch_that_restarts_still_waits_for_all_work(home, monkeypatch):
@@ -367,7 +348,7 @@ def worker_for(root, monkeypatch, version, request, busy=()):
 def test_a_claude_only_live_switch_holds_nothing_and_runs_beside_a_reply(home, monkeypatch):
     root, commands = home
     worker = worker_for(root, monkeypatch, '0.3.3', {'codex': None, 'claude': 'gmail'}, busy=['default: gateway or scheduled work is active.'])
-    assert worker.live and not worker.hold and worker.record['holds_turns'] is False
+    assert worker.live and 'holds_turns' not in worker.record
     held_ledger(root, monkeypatch, active=1, state='running')
     monkeypatch.setattr(ops, 'drain_control', lambda: pytest.fail('a Claude-only live switch writes no drain marker'))
     worker.freeze()
@@ -384,48 +365,143 @@ def test_a_switch_that_restarts_still_refuses_while_work_runs(home, monkeypatch)
         worker_for(root, monkeypatch, '0.3.0', {'codex': None, 'claude': 'gmail'}, busy=['default: gateway or scheduled work is active.'])
 
 
-def test_a_live_codex_switch_holds_new_messages_and_waits_for_running_replies(home, monkeypatch):
+def test_a_live_codex_switch_holds_nothing_and_runs_beside_running_work(home, monkeypatch):
     root, _ = home
-    worker = worker_for(root, monkeypatch, '0.3.3', {'codex': 'work', 'claude': None}, busy=['default: gateway or scheduled work is active.'])
-    assert worker.live and worker.hold
-    written = []
-    monkeypatch.setattr(ops, 'drain_control', lambda: type('D', (), {
-        'drain_requested': staticmethod(lambda home: False),
-        'write_drain_request': staticmethod(lambda home, principal, suppress_notification: written.append(home))}))
-    counts = iter([1, 1, 1, 0])
-    current = {'active': 1}
-
-    def states(require_drain=False):
-        if require_drain:
-            current['active'] = next(counts, 0)
-        return [(root, {'pid': 50, 'gateway_state': 'draining', 'active_agents': current['active']})]
-    monkeypatch.setattr(ops, 'gateway_states', states)
-    monkeypatch.setattr(ops.time, 'sleep', lambda seconds: None)
+    worker = worker_for(root, monkeypatch, '0.3.3', {'codex': 'work', 'claude': None},
+                        busy=['default: gateway or scheduled work is active.', 'A conversation is waiting for input.'])
+    assert worker.live
+    held_ledger(root, monkeypatch, active=3, state='running')
+    monkeypatch.setattr(ops, 'drain_control', lambda: pytest.fail('a live Codex switch writes no drain marker'))
+    monkeypatch.setattr(ops.time, 'sleep', lambda seconds: pytest.fail('a live Codex switch never waits'))
     worker.freeze()
-    assert written == [root] and 'waiting_for_replies' in [c['step'] for c in worker.record['checkpoints']]
-
-
-def test_a_live_codex_switch_gives_up_after_the_wait(home, monkeypatch):
-    root, _ = home
-    worker = worker_for(root, monkeypatch, '0.3.3', {'codex': 'work', 'claude': None})
-    monkeypatch.setattr(ops, 'drain_control', lambda: type('D', (), {
-        'drain_requested': staticmethod(lambda home: False),
-        'write_drain_request': staticmethod(lambda home, principal, suppress_notification: None)}))
-    held_ledger(root, monkeypatch, active=1)
-    clock = iter(range(0, 10_000, 5))
-    monkeypatch.setattr(ops.time, 'monotonic', lambda: next(clock))
-    monkeypatch.setattr(ops.time, 'sleep', lambda seconds: None)
-    with pytest.raises(SwitchError, match='still answering after a minute'):
-        worker.freeze()
+    worker.stop()
+    assert 'checkpoints' not in worker.record
 
 
 def test_a_claude_only_live_switch_restores_the_previous_choice_without_a_hold(home, monkeypatch):
     root, _ = home
     ops.apply_claude('gmail')
     worker = live_worker(root, monkeypatch)
-    worker.hold = False
     worker.drained = []
     ops.apply_claude('work')
     worker.recover({'claude': 'gmail'}, changed=True)
     assert worker.record['recovery'] == 'previous_preference_restored'
     assert ops.claude_selection()['selected'] == 'gmail'
+
+
+# ---------------------------------------------------------------- the watch after a live Codex switch
+
+@pytest.fixture
+def guarded(home, monkeypatch):
+    """One store whose first choice the test drives; the switch moved it from personal to work."""
+    root, _ = home
+    monkeypatch.setattr(ops, 'LOCK', root / 'lock')
+    first = {'value': 'work'}
+    repairs = []
+    monkeypatch.setattr(ops, 'codex_stores', lambda: [(root, first['value'])])
+    monkeypatch.setattr(ops, 'selected', lambda acc: acc)
+
+    def reorder(target, homes=None, reset=True):
+        repairs.append((target, homes, reset))
+        first['value'] = target
+    monkeypatch.setattr(ops, 'reorder_codex_stores', reorder)
+    monkeypatch.setattr(ops, 'gateway_pid', lambda: 50)
+    monkeypatch.setattr(ops.time, 'sleep', lambda seconds: None)
+    record = {'operation_id': 'op', 'state': 'complete',
+              'guard': {'state': 'watching', 'target': 'work', 'previous': 'personal', 'repairs': []}}
+    ops.atomic(ops.RECEIPT, record)
+    return root, first, repairs, record
+
+
+def test_the_watch_puts_the_new_order_back_after_a_revert(guarded, monkeypatch):
+    root, first, repairs, record = guarded
+    idle = iter([False, False, True])
+    reads = {'n': 0}
+
+    def stores():
+        reads['n'] += 1
+        if reads['n'] == 2:
+            first['value'] = 'personal'  # a finishing turn writes its stale pool back
+        return [(root, first['value'])]
+    monkeypatch.setattr(ops, 'codex_stores', stores)
+    monkeypatch.setattr(ops, 'gateway_idle', lambda: next(idle, True))
+    monkeypatch.setattr(ops, 'GUARD_GATEWAY_EVERY', 1)
+    guard = ops.guard_codex_order(record)
+    assert repairs == [('work', [root], False)] and first['value'] == 'work'
+    assert guard['state'] == 'done' and guard['ended'] == 'work_finished'
+    assert guard['repairs'][0]['ok'] is True and guard['repairs'][0]['profiles']
+    assert json.loads(ops.RECEIPT.read_text())['guard']['repairs'] == guard['repairs']
+
+
+def test_the_watch_ends_quietly_when_nothing_was_running(guarded, monkeypatch):
+    _, _, repairs, record = guarded
+    monkeypatch.setattr(ops, 'gateway_idle', lambda: True)
+    guard = ops.guard_codex_order(record)
+    assert repairs == [] and guard['ended'] == 'work_finished' and guard['repairs'] == []
+
+
+def test_the_watch_stops_when_another_switch_starts(guarded, monkeypatch):
+    _, first, repairs, record = guarded
+    monkeypatch.setattr(ops, 'gateway_idle', lambda: False)
+    ops.atomic(ops.RECEIPT, {'operation_id': 'next', 'state': 'accepted'})
+    first['value'] = 'personal'  # the next switch going back is not a revert to repair
+    guard = ops.guard_codex_order(record)
+    assert repairs == [] and guard['ended'] == 'another_switch'
+    assert json.loads(ops.RECEIPT.read_text())['operation_id'] == 'next'
+
+
+def test_the_watch_stops_when_the_gateway_restarts(guarded, monkeypatch):
+    _, _, repairs, record = guarded
+    pids = iter([50, 51])
+    monkeypatch.setattr(ops, 'gateway_pid', lambda: next(pids, 51))
+    monkeypatch.setattr(ops, 'gateway_idle', lambda: False)
+    guard = ops.guard_codex_order(record)
+    assert guard['ended'] == 'gateway_restarted' and repairs == []
+
+
+def test_the_watch_gives_up_on_something_that_keeps_choosing_the_old_order(guarded, monkeypatch):
+    root, first, repairs, record = guarded
+    monkeypatch.setattr(ops, 'gateway_idle', lambda: False)
+    monkeypatch.setattr(ops, 'codex_stores', lambda: [(root, 'personal')])
+    guard = ops.guard_codex_order(record)
+    assert guard['ended'] == 'too_many_reverts' and len(repairs) == ops.GUARD_MAX_REPAIRS
+
+
+def test_the_watch_ends_at_its_time_limit(guarded, monkeypatch):
+    _, _, repairs, record = guarded
+    monkeypatch.setattr(ops, 'gateway_idle', lambda: False)
+    clock = iter(range(0, 10**9, 600))
+    monkeypatch.setattr(ops.time, 'monotonic', lambda: next(clock))
+    guard = ops.guard_codex_order(record, now=lambda: next(clock))
+    assert guard['ended'] == 'time_limit' and repairs == []
+
+
+def test_live_verify_starts_the_watch_only_for_a_codex_change(home, monkeypatch):
+    root, _ = home
+    worker = live_worker(root, monkeypatch)
+    worker.record['previous'] = {'codex': 'personal'}
+    monkeypatch.setattr(ops, 'service_owns_gateway', lambda name: True)
+    monkeypatch.setattr(ops, 'codex_stores', lambda: [])
+    monkeypatch.setattr(ops, 'common_selection', lambda stores: 'work')
+    monkeypatch.setattr(ops, 'usage', lambda account: None)
+    monkeypatch.setattr(ops, 'accounts', lambda: {'work': {}})
+    worker.verify({'codex': 'work', 'claude': None})
+    assert worker.record['guard']['state'] == 'watching'
+    assert (worker.record['guard']['target'], worker.record['guard']['previous']) == ('work', 'personal')
+    restart = live_worker(root, monkeypatch)
+    restart.live = False
+    restart.record['previous'] = {'codex': 'personal'}
+    monkeypatch.setattr(restart, 'verify_service_owner', lambda: None)
+    restart.verify_stores({'codex': 'work', 'claude': None}, {})
+    assert 'guard' not in restart.record
+
+
+def test_the_dialog_warns_when_codex_tries_the_old_account_again(monkeypatch):
+    monkeypatch.setattr(ops, 'EMAILS', {'personal': 'me@home', 'work': 'me@work'})
+    last = {'state': 'complete', 'target': {'codex': 'work'}, 'previous': {'codex': 'personal'}}
+    warning = ops.revert_warning(last, {'codex': {'selected': 'personal'}})
+    assert 'me@home' in warning and 'me@work' in warning and 'Switch again' in warning
+    assert ops.revert_warning(last, {'codex': {'selected': 'work'}}) is None
+    assert ops.revert_warning({**last, 'state': 'failed'}, {'codex': {'selected': 'personal'}}) is None
+    assert ops.revert_warning({**last, 'target': {'codex': None}}, {'codex': {'selected': 'personal'}}) is None
+    assert ops.revert_warning(None, {'codex': {'selected': 'personal'}}) is None
