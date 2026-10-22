@@ -1,7 +1,16 @@
 # Release notes — Hermes Account Switcher
 
-## Unreleased
+## 1.3.3
 
+Makes switching quicker and the switch window calmer. Tested on the owner's PC before release.
+
+- **The switch window no longer shows stale state.** The last switch result can be dismissed, and an
+  old failure becomes a neutral "earlier attempt" note after a clean Recheck. When the chosen accounts
+  are already in use, the window says so instead of "pick a different account".
+- **The button reads "Switch completed" after a finished switch** and goes back to "Switch account"
+  when a choice changes. A switch that finishes with the window open takes a fresh check.
+- **A Claude login file that is briefly locked** (Claude Code renewing its token) is retried, then
+  reported as unreadable, not as signed out.
 - **A Codex switch keeps the gateway down for seconds, not a minute.** Each profile's Codex login order
   was changed one profile after another, two Hermes commands each, while the gateway was stopped. With
   ten profiles on the owner's PC that took about a minute, long enough for Hermes Desktop to start a
