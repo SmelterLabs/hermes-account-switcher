@@ -1,0 +1,79 @@
+name: Release
+
+# Publishes a GitHub release from an existing tag: builds the archive with build_release.py,
+# runs the backend tests on the extracted archive on Windows, and attaches the archive,
+# its SHA-256 and a gates file. Run it by hand from the Actions tab after pushing the tag.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release, for example v1.3.3
+        required: true
+      notes:
+        description: Release notes (Markdown)
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, test and publish
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      TAG: ${{ inputs.tag }}
+      NOTES: ${{ inputs.notes }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Check the tag matches the plugin version
+        run: |
+          version=$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\}\r\{0,1\}$/\1/p' plugin.yaml)
+          echo "plugin.yaml version: $version"
+          test "v$version" = "$TAG"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Build the archive
+        run: python build_release.py --output out
+      - name: Run the backend tests on the extracted archive
+        run: |
+          mkdir extracted
+          python -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "out/account-switcher-$VERSION.zip" extracted
+          python -m pip install -q -r extracted/requirements-test.lock
+          cd extracted
+          python -m pytest tests -q -p no:cacheprovider | tee ../pytest.txt
+      - name: Write the gates file
+        run: |
+          python - <<'PY'
+          import json, os, re, zipfile
+          v = os.environ['VERSION']
+          archive = f'out/account-switcher-{v}.zip'
+          summary = open('pytest.txt', encoding='utf-8').read().strip().splitlines()[-1]
+          passed = int(re.search(r'(\d+) passed', summary).group(1))
+          gates = {
+              'what': f'Release gates on the exact {v} archive, run by the Release workflow on GitHub Actions (windows-latest).',
+              'archive': os.path.basename(archive),
+              'archive_sha256': open(archive[:-4] + '.sha256').read().split()[0],
+              'archive_files': len(zipfile.ZipFile(archive).namelist()),
+              'public_commit': os.environ['GITHUB_SHA'],
+              'automated_tests': {'backend_on_the_extracted_archive': passed, 'pytest_summary': summary},
+              'workflow_run': f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+          }
+          with open(f'out/release-{v}-gates.json', 'w', encoding='utf-8') as f:
+              json.dump(gates, f, indent=1)
+              f.write('\n')
+          print(json.dumps(gates, indent=1))
+          PY
+      - name: Publish the release
+        run: |
+          printf '%s\n' "$NOTES" > notes.md
+          gh release create "$TAG" --verify-tag --title "Hermes Account Switcher $VERSION" --notes-file notes.md \
+            "out/account-switcher-$VERSION.zip" "out/account-switcher-$VERSION.sha256" "out/release-$VERSION-gates.json"
