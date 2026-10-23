@@ -47,6 +47,7 @@ def runtime_python():
 
 RECEIPT = ROOT / 'logs/account-switcher-last.json'
 LOCK = ROOT / 'logs/account-switcher.lock'
+STANDBY = ROOT / 'logs/account-switcher-standby.json'
 NS = '/api/plugins/account-switcher'
 ENV_SET = Path(__file__).resolve().with_name('env_set.py')
 WRITER = Path(__file__).resolve().with_name('hermes_writer.py')
@@ -70,12 +71,13 @@ _PATH_LOCK = threading.RLock()
 
 def configure_paths(settings=None):
     """Bind every mutable runtime path from the same validated settings object."""
-    global ROOT, EXE, RECEIPT, LOCK, CLAUDE_AUTH
+    global ROOT, EXE, RECEIPT, LOCK, STANDBY, CLAUDE_AUTH
     settings = settings or load_settings()
     ROOT = settings.hermes_root
     EXE = settings.desktop_exe
     RECEIPT = ROOT / 'logs/account-switcher-last.json'
     LOCK = ROOT / 'logs/account-switcher.lock'
+    STANDBY = ROOT / 'logs/account-switcher-standby.json'
     CLAUDE_AUTH = ROOT / 'claude-auth'
     return settings
 
@@ -170,7 +172,10 @@ def recover_abandoned_check():
             if (process.info['name'] or '').lower() != 'pythonw.exe':
                 continue
             args = process.info['cmdline']
-            if args is None or any(str(arg).endswith('switch_worker.py') for arg in args):
+            if args is None:
+                return
+            # A standby worker waits for a switch that has not been made; it is not this switch's worker.
+            if any(str(arg).endswith('switch_worker.py') for arg in args) and 'standby' not in args:
                 return
         if LOCK.read_bytes() != raw:
             return
@@ -1184,6 +1189,49 @@ WRITER_READY_WAIT = 30
 WRITER_JOB_WAIT = 60
 
 
+# A standby worker: started when the dialog opens, it loads Hermes (its own imports and the writer's) before
+# the click, then waits for that click's switch. It holds no lock and changes nothing while it waits.
+STANDBY_SECONDS = 5 * 60
+STANDBY_POLL = 0.1
+# How long the switch route waits for a standby to take its switch before launching a worker itself.
+STANDBY_CLAIM_WAIT = 1.5
+
+
+def claim_file(operation_id):
+    return LOCK.with_name(f'{LOCK.name}.{operation_id}.claim')
+
+
+def claim(operation_id):
+    """Exactly one worker runs a switch: the first to create its claim file."""
+    try:
+        with claim_file(operation_id).open('x', encoding='utf-8') as f:
+            f.write(str(os.getpid()))
+        return True
+    except FileExistsError:
+        return False
+
+
+def standby_alive():
+    """The standby worker's record when that process is still alive and has not yet given up."""
+    try:
+        data = json.loads(STANDBY.read_text(encoding='utf-8'))
+        process = psutil.Process(data['pid'])
+        if abs(process.create_time() - data['born']) > 1 or time.time() - data['born'] > STANDBY_SECONDS:
+            return None
+        return data
+    except Exception:
+        return None
+
+
+def start_standby(pythonw, worker, launch):
+    """Start a standby worker unless one is waiting already. Never fails the caller."""
+    try:
+        if standby_alive() is None and not LOCK.exists():
+            launch(pythonw, worker, 'standby', ROOT)
+    except Exception:
+        pass
+
+
 class HermesWriter:
     """The hermes_writer.py helper: one Hermes Python, started at the beginning of a switch, that runs Hermes's
     own write functions for every profile. When it cannot start, is missing a Hermes function, or fails a job,
@@ -1194,8 +1242,12 @@ class HermesWriter:
         self.lines = queue.Queue()
         self.ready = None
         self.reason = None
+        self.began = None
+        # Seconds from start to its ready line (Hermes's import), for the receipt.
+        self.ready_after = None
 
     def start(self):
+        self.began = time.monotonic()
         try:
             self.process = subprocess.Popen(
                 [str(runtime_python()), str(WRITER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -1218,15 +1270,21 @@ class HermesWriter:
         except (queue.Empty, ValueError):
             return None
 
-    def run(self, job):
-        """The answer to `job`, or None when the commands must be used instead."""
+    def wait_ready(self):
+        """Wait for the ready line once; True when jobs can be sent."""
         if self.ready is None:
             answer = self._answer(WRITER_READY_WAIT)
             self.ready = bool(answer and answer.get('ready'))
-            if not self.ready:
+            if self.ready:
+                self.ready_after = round(time.monotonic() - self.began, 1)
+            else:
                 self.reason = ('a Hermes function it needs is missing or changed ({})'.format(answer.get('reason'))
                                if answer else 'it did not start in time')
-        if not self.ready:
+        return self.ready
+
+    def run(self, job):
+        """The answer to `job`, or None when the commands must be used instead."""
+        if not self.wait_ready():
             self.close()
             return None
         try:
@@ -1263,6 +1321,8 @@ def written_by_hermes(writer, job, record):
     if record is not None:
         if answer is not None:
             record.setdefault('writer', 'hermes')
+            # Seconds Hermes's own functions took for this job, inside the helper.
+            record.setdefault('writer_seconds', []).append(answer.get('seconds'))
         elif writer is not None:
             record['writer'] = 'commands'
             record['writer_fallback'] = writer.reason
@@ -1398,7 +1458,7 @@ def revert_warning(last, summary):
 
 
 class WindowsOps:
-    def __init__(self, record):
+    def __init__(self, record, writer=None):
         self.record = record
         self.bs = []
         self.drained = []
@@ -1413,8 +1473,8 @@ class WindowsOps:
         # Live switch: nothing restarts and nothing is held. The stores change beside running work; each chat
         # reads them on its next turn. A turn already running finishes on the account it started with.
         self.live = False
-        # The in-process writer (HermesWriter), started in preflight.
-        self.writer = None
+        # The in-process writer (HermesWriter): a warm one from a standby worker, else started in preflight.
+        self.writer = writer
 
     def stage(self, name):
         self.record['state'] = name
@@ -1431,6 +1491,8 @@ class WindowsOps:
 
     def preflight(self, request):
         began = time.monotonic()
+        # Where the check's seconds go, for the receipt's `checked` checkpoint.
+        parts = {}
         ensure_settings_unchanged()
         try:
             require_switch_interfaces()
@@ -1439,10 +1501,15 @@ class WindowsOps:
         runtime_python()  # Fail before any process or credential mutation.
         if load_settings().gateway_service is None:
             hermes_launcher()
-        # Hermes's import takes seconds; let it load while the checks below run.
-        self.writer = HermesWriter()
-        self.writer.start()
+        parts['interfaces'] = round(time.monotonic() - began, 1)
+        if self.writer is None:
+            # Hermes's import takes seconds; let it load while the checks below run.
+            self.writer = HermesWriter()
+            self.writer.start()
+        else:
+            self.record['worker'] = 'standby'
         self.stage('checking')
+        mark = time.monotonic()
         p = preflight()
         self.hosted = gateway_hosts_desktop()
         self.gateway = self.hosted or gateway_in_use()
@@ -1458,8 +1525,18 @@ class WindowsOps:
             previous['codex'] = p['codex']['selected']
         if request.get('claude'):
             previous['claude'] = p['claude']['selected'] if p['claude']['state'] == 'set' else 'unset'
+        parts['local'] = round(time.monotonic() - mark, 1)
         # The OpenAI and Anthropic checks are independent network calls; run them side by side.
         checks = []
+
+        def timed(name, check):
+            def run():
+                start = time.monotonic()
+                try:
+                    return check()
+                finally:
+                    parts[name] = round(time.monotonic() - start, 1)
+            return run
         if request.get('codex'):
             # The other account is the idle one by definition, so its access token has often lapsed; asking
             # OpenAI with it would only read as "could not confirm". Hermes renews it at first use.
@@ -1467,11 +1544,11 @@ class WindowsOps:
             if note:
                 self.warn(note)
             else:
-                checks.append(lambda: usage(target))
+                checks.append(timed('openai', lambda: usage(target)))
         if request.get('claude'):
             def identify_claude():
                 self.record['claude_identity_before'] = claude_identity(request['claude'])['method']
-            checks.append(identify_claude)
+            checks.append(timed('anthropic', identify_claude))
         side_by_side(lambda check: check(), checks)
         if not self.hosted:
             self.old_main = desktop()
@@ -1480,7 +1557,7 @@ class WindowsOps:
         self.record.update(previous=previous, desktop_restarts=not self.hosted, restarts=not self.live,
                            old_desktop_pid=self.old_main.pid if self.old_main else None,
                            old_gateway_pid=self.old_gateway[0] if self.gateway else None)
-        self.checkpoint('checked', seconds=round(time.monotonic() - began, 1))
+        self.checkpoint('checked', seconds=round(time.monotonic() - began, 1), parts=parts)
         return {'previous': previous}
 
     def freeze(self):
@@ -1596,7 +1673,8 @@ class WindowsOps:
             if not allow_changed:
                 ensure_settings_unchanged()
             # `reset_profiles`: where the target login had a cooldown or error, so `auth reset` ran as well.
-            self.checkpoint('codex_applied', seconds=round(time.monotonic() - began, 1), reset_profiles=reset)
+            self.checkpoint('codex_applied', seconds=round(time.monotonic() - began, 1), reset_profiles=reset,
+                            hermes_ready_after=getattr(self.writer, 'ready_after', None))
             if common_selection(codex_stores()) != target:
                 raise SwitchError('Saved account readback does not match the requested account in every profile.')
         if request.get('claude'):
@@ -1625,8 +1703,9 @@ class WindowsOps:
         claude_target = request.get('claude')
         if self.live:
             # Nothing restarted: the stores are the evidence, and the gateway reads them on its next turn.
-            result = {'new_desktop_pid': None, 'new_gateway_pid': None, 'gateway_pid': service()['pid'],
-                      'restarted': False, 'profiles': [{'profile': 'gateway', 'pid': service()['pid']}]}
+            pid = service()['pid']
+            result = {'new_desktop_pid': None, 'new_gateway_pid': None, 'gateway_pid': pid,
+                      'restarted': False, 'profiles': [{'profile': 'gateway', 'pid': pid}]}
             return self.verify_stores(request, result)
         if self.hosted:
             # The gateway is the only account consumer; Desktop was never closed and reattaches by itself.
@@ -1698,7 +1777,9 @@ class WindowsOps:
                  'user guide), then restart it.')
 
     def verify_stores(self, request, result):
-        self.verify_service_owner()
+        if not self.live:
+            # A live switch stopped and started nothing; preflight already proved who owns the gateway.
+            self.verify_service_owner()
         codex_target = request.get('codex')
         claude_target = request.get('claude')
         if codex_target:

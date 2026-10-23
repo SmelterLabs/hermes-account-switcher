@@ -1,4 +1,7 @@
-"""One-shot hidden worker. No scheduler, daemon, network listener, or model calls."""
+"""One-shot hidden worker. No scheduler, daemon, network listener, or model calls.
+
+Started with an operation id it runs that switch. Started with `standby` (when the switch dialog opens) it
+loads Hermes ahead of the click, waits up to a few minutes for that click's switch, runs it, and exits."""
 import json
 import os
 import sys
@@ -28,11 +31,59 @@ def failure_details(exc):
 
 
 def main(operation_id):
+    if operation_id == 'standby':
+        standby()
+        return
     with ops.bound_settings():
         _main_bound(operation_id)
 
 
-def _main_bound(operation_id):
+def standby():
+    """Load Hermes now, then take the next switch the dialog starts, or exit after STANDBY_SECONDS."""
+    writer = None
+    try:
+        with ops.bound_settings():
+            ops.require_switch_interfaces()
+            writer = ops.HermesWriter()
+            writer.start()
+            writer.wait_ready()
+            ops.atomic(ops.STANDBY, {'pid': os.getpid(), 'born': psutil.Process().create_time()})
+            lock, receipt = ops.LOCK, ops.RECEIPT
+        deadline = time.monotonic() + ops.STANDBY_SECONDS
+        while time.monotonic() < deadline:
+            operation_id = waiting_switch(lock, receipt)
+            if operation_id and ops.claim(operation_id):
+                with ops.bound_settings():
+                    _main_bound(operation_id, writer)
+                writer = None  # The switch closed it.
+                return
+            time.sleep(ops.STANDBY_POLL)
+    except BaseException:
+        pass  # A standby that cannot warm up leaves the click to an ordinary worker.
+    finally:
+        if writer is not None:
+            writer.close()
+        try:
+            if json.loads(ops.STANDBY.read_text()).get('pid') == os.getpid():
+                ops.STANDBY.unlink()
+        except Exception:
+            pass
+
+
+def waiting_switch(lock, receipt):
+    """The id of a switch the dialog started for a standby worker and nobody has taken yet."""
+    try:
+        operation_id = json.loads(lock.read_text()).get('operation_id')
+        record = json.loads(receipt.read_text())
+    except (OSError, ValueError):
+        return None
+    if (operation_id and record.get('operation_id') == operation_id and record.get('state') == 'accepted'
+            and record.get('standby') is True):
+        return operation_id
+    return None
+
+
+def _main_bound(operation_id, writer=None):
     record = json.loads(ops.RECEIPT.read_text())
     if record['operation_id'] != operation_id or json.loads(ops.LOCK.read_text())['operation_id'] != operation_id:
         return
@@ -62,7 +113,7 @@ def _main_bound(operation_id):
             return
         wait_for(lambda: main_pid is None or main_pid not in {p.pid for p in psutil.Process().parents()},
                  10, 'Worker is still attached to Desktop; no restart or switch was attempted.')
-        evidence = switch_transaction(WindowsOps(record), record['target'])
+        evidence = switch_transaction(WindowsOps(record, writer=writer), record['target'])
         record.update(evidence)
         if record.get('restarts') is False:
             took = time.time() - record['started_at'] if isinstance(record.get('started_at'), (int, float)) else None
@@ -99,6 +150,7 @@ def _main_bound(operation_id):
         ops.atomic(ops.RECEIPT, record)
         if ops.LOCK.exists() and json.loads(ops.LOCK.read_text()).get('operation_id') == operation_id:
             ops.LOCK.unlink()
+        ops.claim_file(operation_id).unlink(missing_ok=True)
     # A live Codex switch is reported complete, and the lock is free for the next switch, before this watch:
     # it only puts the new order back if a turn that was already running writes the old one.
     if record.get('state') == 'complete' and (record.get('guard') or {}).get('state') == 'watching':

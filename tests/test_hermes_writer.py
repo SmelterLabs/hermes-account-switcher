@@ -96,6 +96,7 @@ def test_the_protocol_says_only_ready_and_error_types(monkeypatch, capsys):
                                        json.dumps(job) + '\n'])
     hermes_writer.main()
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert isinstance(lines[1].pop('seconds'), float)
     assert lines == [{'ready': True}, {'ok': True, 'reset': []}, {'ok': False, 'error': 'SystemExit'}]
 
 
@@ -131,7 +132,8 @@ def test_the_writer_answers_jobs_through_one_process(tmp_path, monkeypatch):
     writer.start()
     record = {}
     answer = ops.written_by_hermes(writer, {'codex': [{'home': 'A', 'id': 'x', 'reset': True}]}, record)
-    assert answer['reset'] == ['A'] and record == {'writer': 'hermes'}
+    assert answer['reset'] == ['A'] and record == {'writer': 'hermes', 'writer_seconds': [None]}
+    assert writer.ready_after is not None
     assert ops.written_by_hermes(writer, {'codex': []}, record)['ok'] is True
     writer.close()
     assert writer.process is None

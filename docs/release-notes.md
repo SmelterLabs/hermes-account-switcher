@@ -16,6 +16,8 @@ Switching is faster.
   renamed a function), the switch uses the per-profile commands and says so.
 - **The check after the switch no longer asks OpenAI and Anthropic again** for a switch without a
   restart; both logins were confirmed seconds earlier and nothing about them changed.
+- **Hermes is loaded before you click.** Opening the switch window starts a worker that loads Hermes and
+  waits (up to five minutes) for your choice, so the click no longer waits for Hermes to start.
 - **No start-up pause** for a switch that restarts nothing.
 - The window says how many seconds the switch took, and the receipt records each step.
 - **A Claude login that cannot be checked now says why**: its sign-in had expired and Claude Code could

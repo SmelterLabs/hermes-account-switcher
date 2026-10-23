@@ -73,6 +73,18 @@ The release is a "unified package": backend code under
    receipt says `writer: hermes` or `writer: commands` plus `writer_fallback`, and the dialog's
    completion line names the reason. A live verify reads the stores back but does not ask OpenAI or
    Anthropic again: preflight already confirmed both logins and a live switch changes no login.
+
+   **Standby worker (1.4.3).** On the unified runtime the dialog's `/preflight` starts a worker with the
+   argument `standby` (`start_standby`, at most one, recorded in `logs/account-switcher-standby.json`). It
+   imports the switch's Hermes interfaces and starts the writer, waits for its ready line, then polls for a
+   switch whose receipt says `standby: true`. `/switch` writes that receipt and waits up to
+   `STANDBY_CLAIM_WAIT` for the standby to create the operation's claim file (`claim()`, exclusive create);
+   if none appears the route creates it itself and launches an ordinary worker, so exactly one worker runs
+   each switch. A standby holds no lock, changes nothing while it waits, and exits after `STANDBY_SECONDS`
+   (5 min). Abandoned-lock recovery ignores a standby. The receipt notes `worker: standby`; the `checked`
+   checkpoint's `parts` split its seconds into `interfaces`, `local`, `openai` and `anthropic`, and
+   `codex_applied.hermes_ready_after` and `writer_seconds` show the helper's import and job times. A live
+   verify scans processes once and skips the service-owner re-check (nothing was stopped or started).
 5. **Start**: the gateway, its health, then Hermes Desktop through the Windows shell so it gets
    the user's environment and not the worker's.
 6. **Verify**: new process ids, every reopened backend's own state, every stored order, Claude
@@ -290,7 +302,7 @@ the interface suite on Linux, on every push to `main` and every pull request. Te
 Windows APIs or drive-letter paths carry `@pytest.mark.windows` and are skipped on other systems,
 so only the Windows job proves them.
 
-Current counts: 414 backend, 50 interface. The 1.2.3 runtime support was proven on the owner's
+Current counts: 422 backend, 50 interface. The 1.2.3 runtime support was proven on the owner's
 PC with one real switch: `docs/receipts/2026-10-17-unified-runtime-owner-pc.json`. Live evidence and what is still not run:
 [docs/acceptance.md](docs/acceptance.md).
 

@@ -150,6 +150,10 @@ def preflight(request: Request):
             if ops.LOCK.exists():
                 result['blockers'].append(IN_PROGRESS)
                 result['ok'] = False
+            elif result['ok'] and ops.gateway_hosts_desktop():
+                # Load Hermes in a waiting worker now, so a click switches without that wait.
+                ops.start_standby(ops.runtime_python().with_name('pythonw.exe'), HERE / 'switch_worker.py',
+                                  sibling('worker_launch').launch)
             result['scope'] = SCOPE
             return result
     except Exception as exc:
@@ -164,6 +168,16 @@ def switch(request: Request, body: dict):
             return _switch_bound(body)
     except SettingsError as exc:
         raise HTTPException(409, str(exc)) from None
+
+
+def taken_by_standby(operation_id):
+    """True when the waiting standby worker took this switch; otherwise this route claims it and launches one."""
+    deadline = time.monotonic() + ops.STANDBY_CLAIM_WAIT
+    while time.monotonic() < deadline:
+        if ops.claim_file(operation_id).exists():
+            return True
+        time.sleep(0.05)
+    return not ops.claim(operation_id)
 
 
 def _switch_bound(body):
@@ -186,10 +200,14 @@ def _switch_bound(body):
             json.dump({'operation_id': operation_id, 'pid': os.getpid()}, f)
     except FileExistsError:
         raise HTTPException(409, IN_PROGRESS) from None
+    standby = ops.gateway_hosts_desktop() and ops.standby_alive() is not None
     record = {'operation_id': operation_id, 'target': target, 'settings_sha256': settings_digest(), 'started_at': time.time(),
-              'state': 'accepted', 'message': f'Checking active work before switching to {describe(target)}.'}
+              'state': 'accepted', 'message': f'Checking active work before switching to {describe(target)}.',
+              'standby': standby}
     try:
         ops.atomic(ops.RECEIPT, record)
+        if standby and taken_by_standby(operation_id):
+            return {'accepted': True, 'operation_id': operation_id}
         pythonw = ops.runtime_python().with_name('pythonw.exe')
         if not pythonw.is_file():
             raise SwitchError('The hidden Windows Python launcher is unavailable.')

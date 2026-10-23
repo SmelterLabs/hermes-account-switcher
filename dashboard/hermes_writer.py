@@ -8,7 +8,7 @@ locking (auth.lock), atomic saves and caches are Hermes's own. It never writes a
 
 Protocol, one JSON object per line:
 - on start it prints {"ready": true} or {"ready": false, "reason": "..."}; the caller then uses the commands;
-- each job line is answered with {"ok": true, "reset": [...]} or {"ok": false, "error": "..."};
+- each job line is answered with {"ok": true, "reset": [...], "seconds": n} or {"ok": false, "error": "..."};
 - it exits when its input closes.
 Nothing else is printed: Hermes's own messages are discarded, and an error carries only its type, never text
 that could hold account details.
@@ -17,6 +17,7 @@ import contextlib
 import io
 import json
 import sys
+import time
 
 CODEX = 'openai-codex'
 
@@ -85,8 +86,10 @@ def main():
         return
     say({'ready': True})
     for line in sys.stdin:
+        began = time.monotonic()
         try:
-            say({'ok': True, 'reset': run(json.loads(line), *loaded)})
+            reset = run(json.loads(line), *loaded)
+            say({'ok': True, 'reset': reset, 'seconds': round(time.monotonic() - began, 2)})
         except BaseException as exc:  # Hermes refuses a config write with SystemExit
             say({'ok': False, 'error': type(exc).__name__})
 
