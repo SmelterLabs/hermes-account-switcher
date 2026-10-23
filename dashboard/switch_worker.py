@@ -1,7 +1,11 @@
-"""One-shot hidden worker. No scheduler, daemon, network listener, or model calls."""
+"""One-shot hidden worker. No scheduler, daemon, network listener, or model calls.
+
+Started with an operation id it runs that switch. Started with `standby` (when the switch dialog opens) it
+loads Hermes ahead of the click, waits up to a few minutes for that click's switch, runs it, and exits."""
 import json
 import os
 import sys
+import threading
 import time
 from switch_core import SwitchError, describe, switch_transaction
 from settings import SettingsError, settings_digest
@@ -28,11 +32,75 @@ def failure_details(exc):
 
 
 def main(operation_id):
+    if operation_id == 'standby':
+        standby()
+        return
     with ops.bound_settings():
         _main_bound(operation_id)
 
 
-def _main_bound(operation_id):
+def standby():
+    """Take the next switch the dialog starts, with Hermes already loading or loaded; exit after
+    STANDBY_SECONDS or when this plugin's code changes (an update), and the next status poll starts another.
+
+    It registers at once and watches for a switch from its first moment: a click that comes while Hermes is
+    still loading is taken here and waits only for the rest of that load, never for a second, cold one."""
+    writer = None
+    try:
+        with ops.bound_settings():
+            code = ops.code_fingerprint()
+            writer = ops.HermesWriter()
+            writer.start()
+            ops.atomic(ops.STANDBY, {'pid': os.getpid(), 'born': psutil.Process().create_time(), 'code': code})
+            lock, receipt = ops.LOCK, ops.RECEIPT
+        # The worker's own Hermes imports load beside the writer's; a switch taken meanwhile waits on them.
+        threading.Thread(target=warm_imports, daemon=True).start()
+        deadline = time.monotonic() + ops.STANDBY_SECONDS
+        tick = 0
+        while time.monotonic() < deadline:
+            operation_id = waiting_switch(lock, receipt)
+            if operation_id and ops.claim(operation_id):
+                with ops.bound_settings():
+                    _main_bound(operation_id, writer)
+                writer = None  # The switch closed it.
+                return
+            tick += 1
+            if tick % 50 == 0 and ops.code_fingerprint() != code:
+                return  # Updated: an old standby must not run the new version's switch.
+            time.sleep(ops.STANDBY_POLL)
+    except BaseException:
+        pass  # A standby that fails leaves the click to an ordinary worker.
+    finally:
+        if writer is not None:
+            writer.close()
+        try:
+            if json.loads(ops.STANDBY.read_text()).get('pid') == os.getpid():
+                ops.STANDBY.unlink()
+        except Exception:
+            pass
+
+
+def warm_imports():
+    try:
+        ops.require_switch_interfaces()
+    except BaseException:
+        pass  # The switch itself checks again and reports it.
+
+
+def waiting_switch(lock, receipt):
+    """The id of a switch the dialog started for a standby worker and nobody has taken yet."""
+    try:
+        operation_id = json.loads(lock.read_text()).get('operation_id')
+        record = json.loads(receipt.read_text())
+    except (OSError, ValueError):
+        return None
+    if (operation_id and record.get('operation_id') == operation_id and record.get('state') == 'accepted'
+            and record.get('standby') is True):
+        return operation_id
+    return None
+
+
+def _main_bound(operation_id, writer=None):
     record = json.loads(ops.RECEIPT.read_text())
     if record['operation_id'] != operation_id or json.loads(ops.LOCK.read_text())['operation_id'] != operation_id:
         return
@@ -45,7 +113,11 @@ def _main_bound(operation_id):
     ops.atomic(ops.LOCK, {'operation_id': operation_id, 'pid': os.getpid()})
     handed_off = False
     try:
-        time.sleep(3)  # Let the confirmed UI response render before any shutdown.
+        # Let the confirmed UI response render before anything shuts down. A switch without a restart shuts
+        # nothing down, so it starts at once.
+        if not (ops.gateway_hosts_desktop() and ops.live_switch_possible(record['target'])):
+            time.sleep(3)
+        record.setdefault('checkpoints', []).append({'step': 'worker_started', 'time': time.time()})
         # On the unified gateway runtime the gateway, not Desktop, started this worker and Desktop stays open.
         main_pid = None if ops.gateway_hosts_desktop() else desktop().pid
         if main_pid is not None and main_pid in {p.pid for p in psutil.Process().parents()}:
@@ -58,10 +130,18 @@ def _main_bound(operation_id):
             return
         wait_for(lambda: main_pid is None or main_pid not in {p.pid for p in psutil.Process().parents()},
                  10, 'Worker is still attached to Desktop; no restart or switch was attempted.')
-        evidence = switch_transaction(WindowsOps(record), record['target'])
+        evidence = switch_transaction(WindowsOps(record, writer=writer), record['target'])
         record.update(evidence)
-        done = 'switched without a restart' if record.get('restarts') is False else 'verified after restart'
-        record.update(state='complete', message=f"{describe(record['target'])} {done}.")
+        if record.get('restarts') is False:
+            took = time.time() - record['started_at'] if isinstance(record.get('started_at'), (int, float)) else None
+            done = 'switched without a restart' + (f' in {took:.1f} s' if took is not None else '')
+        else:
+            done = 'verified after restart'
+        message = f"{describe(record['target'])} {done}."
+        if record.get('writer_fallback'):
+            message += (" Hermes's quick in-process write was unavailable "
+                        f"({record['writer_fallback']}), so the slower per-profile commands were used.")
+        record.update(state='complete', message=message)
     except BaseException as exc:
         # BaseException, not Exception: a Hermes import can end the process with SystemExit, and a receipt
         # left at "accepted" reads as pending forever. Only this plugin's own plain-language errors are shown;
@@ -87,6 +167,7 @@ def _main_bound(operation_id):
         ops.atomic(ops.RECEIPT, record)
         if ops.LOCK.exists() and json.loads(ops.LOCK.read_text()).get('operation_id') == operation_id:
             ops.LOCK.unlink()
+        ops.claim_file(operation_id).unlink(missing_ok=True)
     # A live Codex switch is reported complete, and the lock is free for the next switch, before this watch:
     # it only puts the new order back if a turn that was already running writes the old one.
     if record.get('state') == 'complete' and (record.get('guard') or {}).get('state') == 'watching':

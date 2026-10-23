@@ -122,20 +122,41 @@ def test_stores_are_reordered_side_by_side_not_one_after_another(hermes_home, mo
             running['now'] -= 1
 
     for n in range(7):
-        write_store(hermes_home / 'profiles' / f'p{n}', entries())
+        write_store(hermes_home / 'profiles' / f'p{n}', cooled())
     monkeypatch.setattr(ops, 'command', slow_command)
     began = time.monotonic()
-    ops.reorder_codex_stores('work')
+    reset = ops.reorder_codex_stores('work')
     elapsed = time.monotonic() - began
     assert len(order) == 10
-    # Within a store the order is unchanged: priority first, then reset.
-    assert all(steps == ['priority', 'reset'] for steps in order.values())
-    assert running['most'] > 1
-    assert running['most'] <= ops.CODEX_PARALLEL
-    assert elapsed < 10 * 2 * 0.2 / 2  # well under half the one-after-another time
+    # Within a store the order is unchanged: priority first, then reset where the login carries a status.
+    assert all(steps == ['priority', 'reset'] for name, steps in order.items() if name.startswith('p'))
+    assert all(steps == ['priority'] for name, steps in order.items() if not name.startswith('p'))
+    assert sorted(reset) == [f'p{n}' for n in range(7)]
+    # Ten stores fit in one round.
+    assert running['most'] == 10 <= ops.CODEX_PARALLEL
+    assert elapsed < 2 * 0.2 * 2  # two commands deep, not ten
+
+
+def cooled():
+    rows = entries()
+    rows[1]['last_status'] = 'exhausted'
+    return rows
+
+
+def test_reset_runs_only_where_the_target_login_has_a_status(hermes_home, monkeypatch):
+    seen = []
+    monkeypatch.setattr(ops, 'command', lambda args, timeout=60, home=None: seen.append((Path(home).name, args[4])))
+    write_store(hermes_home / 'profiles' / 'alpha', cooled())
+    assert ops.reorder_codex_stores('work') == ['alpha']
+    assert sorted(seen) == sorted([(hermes_home.name, 'priority'), ('alpha', 'priority'), ('alpha', 'reset'),
+                                   ('beta', 'priority')])
+    for field in ops.STATUS_FIELDS:
+        assert ops.needs_reset({field: 'x'}) and not ops.needs_reset({field: None})
 
 
 def test_a_failed_store_fails_the_reorder_after_the_others_finish(hermes_home, monkeypatch):
+    for home in (hermes_home, hermes_home / 'profiles' / 'alpha', hermes_home / 'profiles' / 'beta'):
+        write_store(home, cooled())
     done = []
 
     def command(args, timeout=60, home=None):

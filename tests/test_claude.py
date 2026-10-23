@@ -167,9 +167,22 @@ def test_one_network_blip_does_not_read_as_an_unverifiable_login(home, monkeypat
         raise OSError('fixture outage')
     calls.clear()
     monkeypatch.setattr(ops, '_oauth_profile', down)
-    with pytest.raises(SwitchError, match='could not be verified'):
+    with pytest.raises(SwitchError, match=r'could not be verified with Anthropic \(Anthropic could not be reached \(OSError\)\)'):
         ops.claude_identity('gmail')
     assert len(calls) == 2
+
+
+def test_identity_names_an_http_refusal_without_its_text(home, monkeypatch):
+    import urllib.error
+    login('gmail', 'second@example.invalid')
+
+    def refused(token):
+        raise urllib.error.HTTPError('https://api.anthropic.com', 401, 'private-reason-text', {}, None)
+    monkeypatch.setattr(ops, '_oauth_profile', refused)
+    monkeypatch.setattr(ops.time, 'sleep', lambda s: None)
+    with pytest.raises(SwitchError) as e:
+        ops.claude_identity('gmail')
+    assert '(Anthropic answered HTTP 401)' in str(e.value) and 'private-reason-text' not in str(e.value)
 
 
 def test_identity_rejects_wrong_owner_without_leaking(home, monkeypatch):
@@ -191,9 +204,57 @@ def test_expired_token_gets_one_handshake_then_refuses_cached_label(home, monkey
     calls = []
     monkeypatch.setattr(ops, '_handshake', lambda key: calls.append(key))
     monkeypatch.setattr(ops, '_oauth_profile', lambda token: pytest.fail('expired token must not be sent'))
-    with pytest.raises(SwitchError, match='could not be verified'):
+    with pytest.raises(SwitchError, match=r'\(its sign-in had expired and Claude Code did not renew it\)'):
         ops.claude_identity('anthropic')
     assert calls == ['anthropic']
+    monkeypatch.setattr(ops, '_handshake', lambda key: 'Claude Code was not found on this PC')
+    with pytest.raises(SwitchError, match=r'\(its sign-in had expired and Claude Code was not found on this PC\)'):
+        ops.claude_identity('anthropic')
+
+
+def test_a_login_claude_code_signed_out_while_renewing_says_sign_in_again(home, monkeypatch):
+    login('anthropic', 'first@example.invalid', expires_in=-10)
+    path = ops.claude_dir('anthropic') / '.credentials.json'
+
+    def refused(key):
+        # What Claude Code writes after Anthropic answers its refresh with invalid_grant.
+        data = json.loads(path.read_text(encoding='utf-8'))
+        data['claudeAiOauth'].update(accessToken='', refreshToken='', expiresAt=0)
+        path.write_text(json.dumps(data), encoding='utf-8')
+    monkeypatch.setattr(ops, '_handshake', refused)
+    monkeypatch.setattr(ops, '_oauth_profile', lambda token: pytest.fail('nothing to send'))
+    with pytest.raises(SwitchError, match=r'no longer accepts the saved .* signed it out while renewing it\. Sign it in again with "setup.cmd claude anthropic"'):
+        ops.claude_identity('anthropic')
+
+
+def test_a_sign_in_past_its_own_expiry_is_refused_without_renewing(home, monkeypatch):
+    login('anthropic', 'first@example.invalid', expires_in=-10)
+    path = ops.claude_dir('anthropic') / '.credentials.json'
+    data = json.loads(path.read_text(encoding='utf-8'))
+    data['claudeAiOauth']['refreshTokenExpiresAt'] = int((time.time() - 3600) * 1000)
+    path.write_text(json.dumps(data), encoding='utf-8')
+    monkeypatch.setattr(ops, '_handshake', lambda key: pytest.fail('a dead sign-in must not be renewed'))
+    with pytest.raises(SwitchError, match=r'sign-in expired on .*Sign it in again with "setup.cmd claude anthropic"'):
+        ops.claude_identity('anthropic')
+    row = next(r for r in ops.claude_accounts() if r['key'] == 'anthropic')
+    assert row['logged_in'] is False
+    data['claudeAiOauth']['refreshTokenExpiresAt'] = int((time.time() + 86400) * 1000)
+    path.write_text(json.dumps(data), encoding='utf-8')
+    assert next(r for r in ops.claude_accounts() if r['key'] == 'anthropic')['logged_in'] is True
+
+
+def test_handshake_names_why_it_could_not_renew(home, monkeypatch):
+    monkeypatch.setattr(ops, 'claude_cli', lambda path=None: None)
+    assert ops._handshake('anthropic') == 'Claude Code was not found on this PC'
+    monkeypatch.setattr(ops, 'claude_cli', lambda path=None: 'claude.exe')
+    monkeypatch.setattr(ops, 'hidden_console', lambda: {})
+
+    def slow(*a, **k):
+        raise ops.subprocess.TimeoutExpired('claude', 60)
+    monkeypatch.setattr(ops.subprocess, 'run', slow)
+    assert ops._handshake('anthropic') == 'Claude Code did not finish renewing it in time'
+    monkeypatch.setattr(ops.subprocess, 'run', lambda *a, **k: None)
+    assert ops._handshake('anthropic') is None
 
 
 def test_expired_token_refreshed_by_handshake_is_verified_strongly(home, monkeypatch):
@@ -442,3 +503,25 @@ def test_a_switch_to_a_login_whose_token_lapsed_goes_ahead_with_a_note(home, mon
     with ops.bound_settings():
         worker.preflight({'codex': 'work', 'claude': None})
     assert asked == ['work'] and 'warnings' not in worker.record
+
+
+def test_sign_in_warnings_name_accounts_that_run_out_soon_or_have(home):
+    now = 1_800_000_000
+    rows = [{'key': 'a', 'label': 'A', 'sign_in_ends': now + 2 * 86400},
+            {'key': 'b', 'label': 'B', 'sign_in_ends': now - 60},
+            {'key': 'c', 'label': 'C', 'sign_in_ends': now + 10 * 86400},
+            {'key': 'd', 'label': 'D', 'sign_in_ends': None}]
+    lines = ops.sign_in_warnings(rows, now)
+    assert len(lines) == 2
+    assert lines[0].startswith('The Claude A sign-in runs out on ') and '"setup.cmd claude a"' in lines[0]
+    assert lines[1] == 'The Claude B sign-in has run out; sign it in again with "setup.cmd claude b".'
+
+
+def test_status_rows_carry_when_the_sign_in_ends(home):
+    login('anthropic', 'first@example.invalid')
+    path = ops.claude_dir('anthropic') / '.credentials.json'
+    data = json.loads(path.read_text(encoding='utf-8'))
+    data['claudeAiOauth']['refreshTokenExpiresAt'] = 1_900_000_000_000
+    path.write_text(json.dumps(data), encoding='utf-8')
+    rows = {r['key']: r for r in ops.claude_accounts()}
+    assert rows['anthropic']['sign_in_ends'] == 1_900_000_000 and rows['gmail']['sign_in_ends'] is None

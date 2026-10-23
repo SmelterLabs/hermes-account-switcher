@@ -375,7 +375,7 @@ def test_a_live_codex_switch_holds_nothing_and_runs_beside_running_work(home, mo
     monkeypatch.setattr(ops.time, 'sleep', lambda seconds: pytest.fail('a live Codex switch never waits'))
     worker.freeze()
     worker.stop()
-    assert 'checkpoints' not in worker.record
+    assert [c['step'] for c in worker.record['checkpoints']] == ['checked']
 
 
 def test_a_claude_only_live_switch_restores_the_previous_choice_without_a_hold(home, monkeypatch):
@@ -505,3 +505,52 @@ def test_the_dialog_warns_when_codex_tries_the_old_account_again(monkeypatch):
     assert ops.revert_warning({**last, 'state': 'failed'}, {'codex': {'selected': 'personal'}}) is None
     assert ops.revert_warning({**last, 'target': {'codex': None}}, {'codex': {'selected': 'personal'}}) is None
     assert ops.revert_warning(None, {'codex': {'selected': 'personal'}}) is None
+
+
+# ---------------------------------------------------------------- speed: profiles side by side
+
+def test_claude_profiles_are_written_side_by_side_and_in_order_within_each(home, monkeypatch):
+    import threading
+    import time as real_time
+    root, commands = home
+    inner = ops.command
+    lock = threading.Lock()
+    running = {'now': 0, 'most': 0}
+
+    def slow(args, timeout=60, home=None):
+        with lock:
+            running['now'] += 1
+            running['most'] = max(running['most'], running['now'])
+        real_time.sleep(0.1)
+        inner(args, timeout=timeout, home=home)
+        with lock:
+            running['now'] -= 1
+    monkeypatch.setattr(ops, 'command', slow)
+    ops.apply_claude('gmail')
+    assert running['most'] == 3
+    for name in (root.name, 'alpha', 'beta'):
+        steps = [args[0] for home_, args in commands if home_ == name]
+        assert steps == [str(ops.ENV_SET), '-m']  # .env first, then the setting
+    assert ops.claude_selection()['selected'] == 'gmail'
+
+
+def test_the_receipt_times_each_step(home, monkeypatch):
+    root, _ = home
+    worker = live_worker(root, monkeypatch)
+    worker.apply({'codex': None, 'claude': 'gmail'})
+    steps = {c['step']: c for c in worker.record['checkpoints']}
+    assert isinstance(steps['claude_applied']['seconds'], float)
+
+
+def test_live_verify_does_not_ask_openai_or_anthropic_again(home, monkeypatch):
+    root, _ = home
+    worker = live_worker(root, monkeypatch)
+    worker.record['claude_identity_before'] = 'token'
+    ops.apply_claude('gmail')
+    monkeypatch.setattr(ops, 'service_owns_gateway', lambda name: True)
+    monkeypatch.setattr(ops, 'codex_stores', lambda: [])
+    monkeypatch.setattr(ops, 'common_selection', lambda stores: 'work')
+    monkeypatch.setattr(ops, 'usage', lambda account: pytest.fail('no second quota call'))
+    monkeypatch.setattr(ops, 'claude_identity', lambda key: pytest.fail('no second identity call'))
+    result = worker.verify({'codex': 'work', 'claude': 'gmail'})
+    assert result['claude_identity'] == 'token' and result['codex'] == 'work'
