@@ -18,6 +18,9 @@ Switching is faster.
   restart; both logins were confirmed seconds earlier and nothing about them changed.
 - **No start-up pause** for a switch that restarts nothing.
 - The window says how many seconds the switch took, and the receipt records each step.
+- **A Claude login that cannot be checked now says why**: its sign-in had expired and Claude Code could
+  not renew it (or was not found), Anthropic refused it (with the HTTP status), or Anthropic could not be
+  reached.
 
 ## 1.4.2
 

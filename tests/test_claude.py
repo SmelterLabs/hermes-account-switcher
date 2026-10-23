@@ -167,9 +167,22 @@ def test_one_network_blip_does_not_read_as_an_unverifiable_login(home, monkeypat
         raise OSError('fixture outage')
     calls.clear()
     monkeypatch.setattr(ops, '_oauth_profile', down)
-    with pytest.raises(SwitchError, match='could not be verified'):
+    with pytest.raises(SwitchError, match=r'could not be verified with Anthropic \(Anthropic could not be reached \(OSError\)\)'):
         ops.claude_identity('gmail')
     assert len(calls) == 2
+
+
+def test_identity_names_an_http_refusal_without_its_text(home, monkeypatch):
+    import urllib.error
+    login('gmail', 'second@example.invalid')
+
+    def refused(token):
+        raise urllib.error.HTTPError('https://api.anthropic.com', 401, 'private-reason-text', {}, None)
+    monkeypatch.setattr(ops, '_oauth_profile', refused)
+    monkeypatch.setattr(ops.time, 'sleep', lambda s: None)
+    with pytest.raises(SwitchError) as e:
+        ops.claude_identity('gmail')
+    assert '(Anthropic answered HTTP 401)' in str(e.value) and 'private-reason-text' not in str(e.value)
 
 
 def test_identity_rejects_wrong_owner_without_leaking(home, monkeypatch):
@@ -191,9 +204,26 @@ def test_expired_token_gets_one_handshake_then_refuses_cached_label(home, monkey
     calls = []
     monkeypatch.setattr(ops, '_handshake', lambda key: calls.append(key))
     monkeypatch.setattr(ops, '_oauth_profile', lambda token: pytest.fail('expired token must not be sent'))
-    with pytest.raises(SwitchError, match='could not be verified'):
+    with pytest.raises(SwitchError, match=r'\(its sign-in had expired and Claude Code did not renew it\)'):
         ops.claude_identity('anthropic')
     assert calls == ['anthropic']
+    monkeypatch.setattr(ops, '_handshake', lambda key: 'Claude Code was not found on this PC')
+    with pytest.raises(SwitchError, match=r'\(its sign-in had expired and Claude Code was not found on this PC\)'):
+        ops.claude_identity('anthropic')
+
+
+def test_handshake_names_why_it_could_not_renew(home, monkeypatch):
+    monkeypatch.setattr(ops, 'claude_cli', lambda path=None: None)
+    assert ops._handshake('anthropic') == 'Claude Code was not found on this PC'
+    monkeypatch.setattr(ops, 'claude_cli', lambda path=None: 'claude.exe')
+    monkeypatch.setattr(ops, 'hidden_console', lambda: {})
+
+    def slow(*a, **k):
+        raise ops.subprocess.TimeoutExpired('claude', 60)
+    monkeypatch.setattr(ops.subprocess, 'run', slow)
+    assert ops._handshake('anthropic') == 'Claude Code did not finish renewing it in time'
+    monkeypatch.setattr(ops.subprocess, 'run', lambda *a, **k: None)
+    assert ops._handshake('anthropic') is None
 
 
 def test_expired_token_refreshed_by_handshake_is_verified_strongly(home, monkeypatch):

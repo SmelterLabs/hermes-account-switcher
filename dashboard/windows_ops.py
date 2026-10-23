@@ -570,14 +570,17 @@ def _handshake(key, timeout=60):
     handshake = json.dumps({'type': 'control_request', 'request_id': 'switch', 'request': {'subtype': 'initialize'}}) + '\n'
     exe = claude_cli(env.get('PATH'))
     if exe is None:
-        return
+        return 'Claude Code was not found on this PC'
     argv[0] = exe
     try:
         with tempfile.TemporaryDirectory(prefix='claude-switch-handshake-') as cwd:
             subprocess.run(argv, input=handshake, env=env, cwd=cwd, capture_output=True, text=True,
                            encoding='utf-8', errors='replace', timeout=timeout, **hidden_console())
-    except (OSError, subprocess.SubprocessError):
-        pass
+    except subprocess.TimeoutExpired:
+        return 'Claude Code did not finish renewing it in time'
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f'Claude Code could not be started ({type(exc).__name__})'
+    return None
 
 
 def claude_identity(key):
@@ -600,26 +603,36 @@ def claude_identity(key):
         exp = cred.get('expiresAt')
         return not isinstance(exp, (int, float)) or exp / 1000 <= time.time() + 60
 
+    # Why it could not be verified, named in the message so a receipt tells an expired sign-in from a
+    # network problem. Only an exception's type or an HTTP status is named, never response text.
+    reason = None
     if expired():
-        _handshake(key)
+        problem = _handshake(key)
         try:
             cred = _credentials(key)
         except CredentialsUnreadable:
             raise busy from None
+        if expired():
+            reason = f'its sign-in had expired and {problem or "Claude Code did not renew it"}'
     if not expired():
         email = ''
         for attempt in range(2):  # One network blip must not read as an unverifiable login.
             try:
                 email = _oauth_profile(cred['accessToken'])
                 break
-            except Exception:
+            except Exception as exc:
+                code = getattr(exc, 'code', None)
+                reason = (f'Anthropic answered HTTP {code}' if isinstance(code, int)
+                          else f'Anthropic could not be reached ({type(exc).__name__})')
                 if attempt == 0:
                     time.sleep(2)
         if email:
             if email != expected:
                 raise WrongAccount(f'The {label} Claude folder is logged in as {email}, not {expected}; sign it in again with "setup.cmd claude {key}".')
             return {'email': email, 'method': 'token'}
-    raise SwitchError(f'The {label} Claude login could not be verified with Anthropic; recheck, and if this stays sign it in again with "setup.cmd claude {key}".')
+        reason = reason or 'Anthropic returned no account'
+    raise SwitchError(f'The {label} Claude login could not be verified with Anthropic ({reason}); recheck, and if this '
+                      f'stays sign it in again with "setup.cmd claude {key}".')
 
 
 def claude_value(key):
