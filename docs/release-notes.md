@@ -20,7 +20,8 @@ Switching is faster.
 - The window says how many seconds the switch took, and the receipt records each step.
 - **A Claude login that cannot be checked now says why**: its sign-in had expired and Claude Code could
   not renew it (or was not found), Anthropic refused it (with the HTTP status), or Anthropic could not be
-  reached.
+  reached. If Anthropic has stopped accepting the saved sign-in, Claude Code signs that account out while
+  renewing it; the message now says so and asks for a new sign-in instead of "recheck".
 
 ## 1.4.2
 

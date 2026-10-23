@@ -229,6 +229,14 @@ checked against the login, never inferred from a label**.
 - **The Claude provider installs as `claude-subscription-directsdk-experimental`**, its catalog
   name is `claude-subscription-directsdk`, and as a model provider it needs no `enabled` entry.
   Only an explicit `disabled` entry counts against it.
+- **A switch can find a Claude login already dead, and Claude Code then empties it.** The idle account's
+  access token has usually expired, so the identity check lets Claude Code renew it (`_handshake`). If
+  Anthropic answers that renewal with `invalid_grant` (the saved refresh token was revoked, expired or
+  already used), Claude Code 2.1.x itself blanks `accessToken`, `refreshToken` and `expiresAt` in that
+  folder's `.credentials.json` (its `tengu_oauth_refresh_token_cleared_on_disk` path), and only if the file
+  still holds that same refresh token. The switcher never writes the file. Putting the old file back would
+  not help: Anthropic refuses that token for every caller. The check names this case and asks for a new
+  sign-in.
 - **Claude's sign-in lands as whoever the browser is signed in as.** The identity check catches
   it. A private browser window avoids it.
 - **The identity check reaches Anthropic over the network and can fail for a moment;** it retries
@@ -279,7 +287,7 @@ the interface suite on Linux, on every push to `main` and every pull request. Te
 Windows APIs or drive-letter paths carry `@pytest.mark.windows` and are skipped on other systems,
 so only the Windows job proves them.
 
-Current counts: 410 backend, 49 interface. The 1.2.3 runtime support was proven on the owner's
+Current counts: 411 backend, 49 interface. The 1.2.3 runtime support was proven on the owner's
 PC with one real switch: `docs/receipts/2026-10-17-unified-runtime-owner-pc.json`. Live evidence and what is still not run:
 [docs/acceptance.md](docs/acceptance.md).
 

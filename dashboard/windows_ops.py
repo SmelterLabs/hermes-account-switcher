@@ -612,6 +612,11 @@ def claude_identity(key):
             cred = _credentials(key)
         except CredentialsUnreadable:
             raise busy from None
+        if not cred.get('refreshToken'):
+            # Claude Code empties the login itself when Anthropic answers its renewal with invalid_grant: the
+            # saved sign-in was already refused (revoked, expired or used elsewhere). Nothing here wrote it.
+            raise SwitchError(f'Anthropic no longer accepts the saved {label} Claude sign-in, so Claude Code signed it '
+                              f'out while renewing it. Sign it in again with "setup.cmd claude {key}".')
         if expired():
             reason = f'its sign-in had expired and {problem or "Claude Code did not renew it"}'
     if not expired():

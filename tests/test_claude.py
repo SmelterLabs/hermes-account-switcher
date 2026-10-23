@@ -212,6 +212,21 @@ def test_expired_token_gets_one_handshake_then_refuses_cached_label(home, monkey
         ops.claude_identity('anthropic')
 
 
+def test_a_login_claude_code_signed_out_while_renewing_says_sign_in_again(home, monkeypatch):
+    login('anthropic', 'first@example.invalid', expires_in=-10)
+    path = ops.claude_dir('anthropic') / '.credentials.json'
+
+    def refused(key):
+        # What Claude Code writes after Anthropic answers its refresh with invalid_grant.
+        data = json.loads(path.read_text(encoding='utf-8'))
+        data['claudeAiOauth'].update(accessToken='', refreshToken='', expiresAt=0)
+        path.write_text(json.dumps(data), encoding='utf-8')
+    monkeypatch.setattr(ops, '_handshake', refused)
+    monkeypatch.setattr(ops, '_oauth_profile', lambda token: pytest.fail('nothing to send'))
+    with pytest.raises(SwitchError, match=r'no longer accepts the saved .* signed it out while renewing it\. Sign it in again with "setup.cmd claude anthropic"'):
+        ops.claude_identity('anthropic')
+
+
 def test_handshake_names_why_it_could_not_renew(home, monkeypatch):
     monkeypatch.setattr(ops, 'claude_cli', lambda path=None: None)
     assert ops._handshake('anthropic') == 'Claude Code was not found on this PC'
