@@ -545,8 +545,39 @@ def claude_accounts():
                      'logged_in': bool(cred.get('accessToken') and cred.get('refreshToken')) and not sign_in_expired(cred),
                      # True: a login file exists but was locked or mid-write; not the same as signed out.
                      'unreadable': unreadable,
-                     'cached_email': _cached_label(key) or None})
+                     'cached_email': _cached_label(key) or None,
+                     'sign_in_ends': sign_in_ends(cred)})
     return rows
+
+
+# How long before a Claude sign-in runs out the window starts saying so.
+SIGN_IN_NOTICE_DAYS = 3
+
+
+def sign_in_ends(cred):
+    """When the login's sign-in runs out, in seconds since the epoch, or None when the file does not say."""
+    limit = cred.get('refreshTokenExpiresAt')
+    if not cred.get('refreshToken') or isinstance(limit, bool) or not isinstance(limit, (int, float)) or limit <= 0:
+        return None
+    return limit / 1000
+
+
+def sign_in_warnings(rows, now=None):
+    """A line per Claude account whose sign-in has run out or runs out within SIGN_IN_NOTICE_DAYS."""
+    now = time.time() if now is None else now
+    lines = []
+    for row in rows:
+        ends = row.get('sign_in_ends')
+        if ends is None or ends - now > SIGN_IN_NOTICE_DAYS * 86400:
+            continue
+        name = f"Claude {row['label']}"
+        if ends <= now:
+            lines.append(f'The {name} sign-in has run out; sign it in again with "setup.cmd claude {row["key"]}".')
+        else:
+            when = time.strftime('%b %d at %I:%M %p', time.localtime(ends)).replace(' 0', ' ')
+            lines.append(f'The {name} sign-in runs out on {when}; sign it in again before then with '
+                         f'"setup.cmd claude {row["key"]}" so switching to it keeps working.')
+    return lines
 
 
 def _oauth_profile(token):
@@ -989,10 +1020,12 @@ def selection_summary():
     # The badge must show which account is really paying, not just the configured order: a dead
     # preferred login silently falls through to the next account.
     warnings = [w for w in (health_warning(home_name(home), acc, now) for home, acc in stores) if w]
+    rows = claude_accounts()
     actual = {effective(acc, now) for _, acc in stores}
     return {'codex': {'selected': common_selection(stores), 'accounts': summaries(stores[0][1]) if stores else [],
                       'effective': actual.pop() if len(actual) == 1 else None, 'warnings': warnings},
-            'claude': {'selected': claude['selected'], 'state': claude['state'], 'accounts': claude_accounts()}}
+            'claude': {'selected': claude['selected'], 'state': claude['state'], 'accounts': rows,
+                       'warnings': sign_in_warnings(rows, now)}}
 
 
 def preflight(own_state=None):

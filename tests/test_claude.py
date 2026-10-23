@@ -503,3 +503,25 @@ def test_a_switch_to_a_login_whose_token_lapsed_goes_ahead_with_a_note(home, mon
     with ops.bound_settings():
         worker.preflight({'codex': 'work', 'claude': None})
     assert asked == ['work'] and 'warnings' not in worker.record
+
+
+def test_sign_in_warnings_name_accounts_that_run_out_soon_or_have(home):
+    now = 1_800_000_000
+    rows = [{'key': 'a', 'label': 'A', 'sign_in_ends': now + 2 * 86400},
+            {'key': 'b', 'label': 'B', 'sign_in_ends': now - 60},
+            {'key': 'c', 'label': 'C', 'sign_in_ends': now + 10 * 86400},
+            {'key': 'd', 'label': 'D', 'sign_in_ends': None}]
+    lines = ops.sign_in_warnings(rows, now)
+    assert len(lines) == 2
+    assert lines[0].startswith('The Claude A sign-in runs out on ') and '"setup.cmd claude a"' in lines[0]
+    assert lines[1] == 'The Claude B sign-in has run out; sign it in again with "setup.cmd claude b".'
+
+
+def test_status_rows_carry_when_the_sign_in_ends(home):
+    login('anthropic', 'first@example.invalid')
+    path = ops.claude_dir('anthropic') / '.credentials.json'
+    data = json.loads(path.read_text(encoding='utf-8'))
+    data['claudeAiOauth']['refreshTokenExpiresAt'] = 1_900_000_000_000
+    path.write_text(json.dumps(data), encoding='utf-8')
+    rows = {r['key']: r for r in ops.claude_accounts()}
+    assert rows['anthropic']['sign_in_ends'] == 1_900_000_000 and rows['gmail']['sign_in_ends'] is None

@@ -124,7 +124,9 @@ function normalizeSelections(response) {
     claude: {
       selected: isAccountKey(claude?.selected, claudeAccounts) ? claude.selected : null,
       state: claudeValid ? claude.state : null,
-      accounts: claudeAccounts
+      accounts: claudeAccounts,
+      // Sign-ins that have run out or run out soon. Older backends omit it.
+      warnings: Array.isArray(claude?.warnings) ? claude.warnings.filter(value => typeof value === 'string' && value.trim()) : []
     },
     valid: Boolean(codexValid && claudeValid)
   }
@@ -422,6 +424,16 @@ function SwitchDialog({
                 jsx('ul', { className: 'mt-1 list-disc pl-4', children: status.codex.warnings.map(text => jsx('li', { children: text }, text)) }, 'list')
               ]
             }, 'codex-warnings')
+          : null,
+        (status.claude.warnings || []).length
+          ? jsxs('div', {
+              className: 'rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive',
+              role: 'status',
+              children: [
+                jsx('div', { className: 'font-medium', children: 'Claude sign-in needs attention' }, 'title'),
+                jsx('ul', { className: 'mt-1 list-disc pl-4', children: status.claude.warnings.map(text => jsx('li', { children: text }, text)) }, 'list')
+              ]
+            }, 'claude-warnings')
           : null,
         jsx(OperationNotice, { notice, onDismiss: onDismissNotice }, 'operation'),
         // Calm while the planned restart runs; red only once it has run well past a normal switch.

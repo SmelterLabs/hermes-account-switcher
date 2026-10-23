@@ -24,7 +24,7 @@ Switching is faster.
   renewing it; the message now says so and asks for a new sign-in instead of "recheck".
 - **A Claude account whose sign-in has run out shows as not logged in.** Anthropic asks for a new sign-in
   about four weeks after the last one; the window now marks such an account and the switch names the date,
-  instead of trying a renewal that cannot work.
+  instead of trying a renewal that cannot work. The window warns three days before an account's sign-in runs out.
 
 ## 1.4.2
 

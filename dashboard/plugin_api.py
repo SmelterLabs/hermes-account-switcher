@@ -36,7 +36,7 @@ router = APIRouter()
 SCOPE = 'All Hermes profiles on this PC'
 # What status answers before the first setup: nothing selected, nothing to choose from, and the reason.
 NOT_SET_UP = {'setup_needed': True, 'codex': {'selected': None, 'accounts': [], 'effective': None, 'warnings': []},
-              'claude': {'selected': None, 'state': 'unset', 'accounts': []}, 'last_operation': None,
+              'claude': {'selected': None, 'state': 'unset', 'accounts': [], 'warnings': []}, 'last_operation': None,
               'in_progress': False, 'blockers': [], 'scope': SCOPE}
 IN_PROGRESS = 'An account switch is already in progress.'
 # What answers "is this Desktop backend idle": Hermes's own idle proof for this process. There is no
