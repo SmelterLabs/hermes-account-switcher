@@ -77,6 +77,18 @@ def get_local_state(request: Request):
         raise HTTPException(409, safe_error(exc)) from None
 
 
+def arm_standby():
+    """Keep one standby worker waiting with Hermes loaded, so a click switches without that wait. Only on the
+    unified runtime, where switches run beside Hermes. Cheap when one is already waiting: one file and one
+    process lookup. Never fails the caller."""
+    try:
+        if ops.gateway_hosts_desktop():
+            ops.start_standby(ops.runtime_python().with_name('pythonw.exe'), HERE / 'switch_worker.py',
+                              sibling('worker_launch').launch)
+    except Exception:
+        pass
+
+
 @router.get('/status')
 def status(request: Request):
     """Cheap: current selections and the last receipt. No process scans, no probes — this is polled."""
@@ -87,6 +99,8 @@ def status(request: Request):
             last = json.loads(ops.RECEIPT.read_text()) if ops.RECEIPT.is_file() else None
             in_progress = ops.LOCK.exists()
             summary = ops.selection_summary()
+            if not in_progress:
+                arm_standby()
             warning = ops.revert_warning(last, summary)
             if warning:
                 summary['codex']['warnings'] = [*summary['codex']['warnings'], warning]
@@ -150,10 +164,8 @@ def preflight(request: Request):
             if ops.LOCK.exists():
                 result['blockers'].append(IN_PROGRESS)
                 result['ok'] = False
-            elif result['ok'] and ops.gateway_hosts_desktop():
-                # Load Hermes in a waiting worker now, so a click switches without that wait.
-                ops.start_standby(ops.runtime_python().with_name('pythonw.exe'), HERE / 'switch_worker.py',
-                                  sibling('worker_launch').launch)
+            else:
+                arm_standby()
             result['scope'] = SCOPE
             return result
     except Exception as exc:

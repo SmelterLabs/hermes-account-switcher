@@ -74,14 +74,17 @@ The release is a "unified package": backend code under
    completion line names the reason. A live verify reads the stores back but does not ask OpenAI or
    Anthropic again: preflight already confirmed both logins and a live switch changes no login.
 
-   **Standby worker (1.4.3).** On the unified runtime the dialog's `/preflight` starts a worker with the
-   argument `standby` (`start_standby`, at most one, recorded in `logs/account-switcher-standby.json`). It
-   imports the switch's Hermes interfaces and starts the writer, waits for its ready line, then polls for a
-   switch whose receipt says `standby: true`. `/switch` writes that receipt and waits up to
+   **Standby worker (1.4.3).** On the unified runtime `/status` (polled while Hermes Desktop shows the
+   plugin) and `/preflight` keep one worker started with the argument `standby` (`arm_standby` →
+   `start_standby`, at most one, `STANDBY_START_GAP` between starts, recorded in
+   `logs/account-switcher-standby.json` with a `code_fingerprint()`). It registers at once, starts the
+   writer and loads the switch's Hermes interfaces on a thread, and from its first moment polls for a switch
+   whose receipt says `standby: true`, so a click during the load waits only for the rest of it. It retires
+   after `STANDBY_SECONDS` (30 min) or when the plugin's code changes, and the next poll starts another.
+   Cost: one idle worker and one idle Hermes helper while Desktop is open. `/switch` writes that receipt and waits up to
    `STANDBY_CLAIM_WAIT` for the standby to create the operation's claim file (`claim()`, exclusive create);
    if none appears the route creates it itself and launches an ordinary worker, so exactly one worker runs
-   each switch. A standby holds no lock, changes nothing while it waits, and exits after `STANDBY_SECONDS`
-   (5 min). Abandoned-lock recovery ignores a standby. The receipt notes `worker: standby`; the `checked`
+   each switch. A standby holds no lock and changes nothing while it waits. Abandoned-lock recovery ignores a standby. The receipt notes `worker: standby`; the `checked`
    checkpoint's `parts` split its seconds into `interfaces`, `local`, `openai` and `anthropic`, and
    `codex_applied.hermes_ready_after` and `writer_seconds` show the helper's import and job times. A live
    verify scans processes once and skips the service-owner re-check (nothing was stopped or started).
@@ -302,7 +305,7 @@ the interface suite on Linux, on every push to `main` and every pull request. Te
 Windows APIs or drive-letter paths carry `@pytest.mark.windows` and are skipped on other systems,
 so only the Windows job proves them.
 
-Current counts: 422 backend, 50 interface. The 1.2.3 runtime support was proven on the owner's
+Current counts: 424 backend, 50 interface. The 1.2.3 runtime support was proven on the owner's
 PC with one real switch: `docs/receipts/2026-10-17-unified-runtime-owner-pc.json`. Live evidence and what is still not run:
 [docs/acceptance.md](docs/acceptance.md).
 

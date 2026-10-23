@@ -1191,7 +1191,8 @@ WRITER_JOB_WAIT = 60
 
 # A standby worker: started when the dialog opens, it loads Hermes (its own imports and the writer's) before
 # the click, then waits for that click's switch. It holds no lock and changes nothing while it waits.
-STANDBY_SECONDS = 5 * 60
+# It stays armed while Hermes Desktop is open: the status poll starts the next one.
+STANDBY_SECONDS = 30 * 60
 STANDBY_POLL = 0.1
 # How long the switch route waits for a standby to take its switch before launching a worker itself.
 STANDBY_CLAIM_WAIT = 1.5
@@ -1211,23 +1212,47 @@ def claim(operation_id):
         return False
 
 
+def code_fingerprint():
+    """Size and time of this plugin's switch code, so a standby from before an update is never used."""
+    here = Path(__file__).resolve().parent
+    parts = []
+    for name in ('switch_worker.py', 'windows_ops.py', 'switch_core.py', 'hermes_writer.py', 'compat.py', 'settings.py'):
+        try:
+            info = (here / name).stat()
+            parts.append(f'{name}:{info.st_size}:{int(info.st_mtime)}')
+        except OSError:
+            parts.append(f'{name}:missing')
+    return '|'.join(parts)
+
+
 def standby_alive():
-    """The standby worker's record when that process is still alive and has not yet given up."""
+    """The standby worker's record when that process is still alive, has not given up, and runs this code."""
     try:
         data = json.loads(STANDBY.read_text(encoding='utf-8'))
         process = psutil.Process(data['pid'])
-        if abs(process.create_time() - data['born']) > 1 or time.time() - data['born'] > STANDBY_SECONDS:
+        if (abs(process.create_time() - data['born']) > 1 or time.time() - data['born'] > STANDBY_SECONDS
+                or data.get('code') != code_fingerprint()):
             return None
         return data
     except Exception:
         return None
 
 
+# A standby needs a moment to register itself; the status poll and the dialog's check must not both start one.
+STANDBY_START_GAP = 20
+_standby_started = [0.0]
+_standby_lock = threading.Lock()
+
+
 def start_standby(pythonw, worker, launch):
     """Start a standby worker unless one is waiting already. Never fails the caller."""
     try:
-        if standby_alive() is None and not LOCK.exists():
-            launch(pythonw, worker, 'standby', ROOT)
+        with _standby_lock:
+            if (standby_alive() is not None or LOCK.exists()
+                    or time.monotonic() - _standby_started[0] < STANDBY_START_GAP):
+                return
+            _standby_started[0] = time.monotonic()
+        launch(pythonw, worker, 'standby', ROOT)
     except Exception:
         pass
 

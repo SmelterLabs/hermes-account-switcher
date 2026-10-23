@@ -37,6 +37,7 @@ def paths(tmp_path, monkeypatch):
     monkeypatch.setattr(ops, 'bound_settings', nullcontext)
     monkeypatch.setattr(ops, 'require_switch_interfaces', lambda: None)
     monkeypatch.setattr(ops, 'STANDBY_POLL', 0.01)
+    monkeypatch.setattr(ops, 'STANDBY_SECONDS', 2)
     monkeypatch.setattr(worker.psutil, 'Process', lambda pid=None: SimpleNamespace(create_time=lambda: 1000.0))
     return tmp_path
 
@@ -57,6 +58,7 @@ def test_a_standby_takes_the_waiting_switch_with_its_warm_writer(paths, monkeypa
     assert ops.claim_file('op1').exists()  # The switch's own worker removes it when it finishes.
     assert not ops.STANDBY.exists()
     assert writers[0].closed is False  # The switch owns it now and closes it in unfreeze.
+    assert ops.STANDBY.exists() is False
 
 
 def test_a_standby_ignores_a_switch_meant_for_a_launched_worker_and_gives_up_in_time(paths, monkeypatch):
@@ -69,12 +71,38 @@ def test_a_standby_ignores_a_switch_meant_for_a_launched_worker_and_gives_up_in_
     assert writer.closed and not ops.STANDBY.exists() and not ops.claim_file('op2').exists()
 
 
-def test_a_standby_that_cannot_load_hermes_leaves_quietly(paths, monkeypatch):
+def test_a_standby_that_cannot_start_leaves_quietly(paths, monkeypatch):
     def broken():
-        raise ops.UnsupportedRuntime('fixture')
-    monkeypatch.setattr(ops, 'require_switch_interfaces', broken)
+        raise OSError('fixture')
+    monkeypatch.setattr(ops, 'HermesWriter', broken)
     worker.main('standby')
     assert not ops.STANDBY.exists()
+
+
+def test_a_standby_from_before_an_update_retires_and_is_never_used(paths, monkeypatch):
+    writer = FakeWriter()
+    monkeypatch.setattr(ops, 'HermesWriter', lambda: writer)
+    versions = iter(['old'] + ['new'] * 1000)
+    monkeypatch.setattr(ops, 'code_fingerprint', lambda: next(versions))
+    monkeypatch.setattr(worker, '_main_bound', lambda *a, **k: pytest.fail('old code must not switch'))
+    worker.main('standby')
+    assert writer.closed and not ops.STANDBY.exists()
+
+
+def test_a_standby_registers_before_hermes_has_loaded(paths, monkeypatch):
+    # A click right after the window opens must find the loading standby, not start a second, cold worker.
+    seen = []
+    class SlowWriter(FakeWriter):
+        def start(self):
+            pass
+    monkeypatch.setattr(ops, 'HermesWriter', SlowWriter)
+    monkeypatch.setattr(ops, 'require_switch_interfaces', lambda: __import__('time').sleep(0.3))
+    def run(operation_id, writer=None):
+        seen.append(json.loads(ops.STANDBY.read_text())['pid'])
+    monkeypatch.setattr(worker, '_main_bound', run)
+    request_switch('early')
+    worker.main('standby')
+    assert seen and ops.claim_file('early').exists()
 
 
 def test_only_one_worker_claims_a_switch(paths):
@@ -93,8 +121,10 @@ def test_the_switch_route_hands_over_to_a_standby_or_claims_it_itself(paths, mon
 def test_standby_liveness_needs_the_same_process_and_a_recent_start(paths, monkeypatch):
     now = time.time()
     monkeypatch.setattr(ops.psutil, 'Process', lambda pid: SimpleNamespace(create_time=lambda: now))
-    ops.STANDBY.write_text(json.dumps({'pid': 5, 'born': now}))
+    ops.STANDBY.write_text(json.dumps({'pid': 5, 'born': now, 'code': ops.code_fingerprint()}))
     assert ops.standby_alive()['pid'] == 5
+    ops.STANDBY.write_text(json.dumps({'pid': 5, 'born': now, 'code': 'before an update'}))
+    assert ops.standby_alive() is None
     ops.STANDBY.write_text(json.dumps({'pid': 5, 'born': now - 30}))  # A recycled pid.
     assert ops.standby_alive() is None
     ops.STANDBY.unlink()
@@ -102,10 +132,13 @@ def test_standby_liveness_needs_the_same_process_and_a_recent_start(paths, monke
 
 
 def test_start_standby_launches_once_and_never_while_a_switch_runs(paths, monkeypatch):
+    monkeypatch.setattr(ops, '_standby_started', [-1e9])
     launched = []
     launch = lambda *args: launched.append(args)
     ops.start_standby('pythonw.exe', 'switch_worker.py', launch)
     assert launched == [('pythonw.exe', 'switch_worker.py', 'standby', ops.ROOT)]
+    ops.start_standby('pythonw.exe', 'switch_worker.py', launch)  # Within the start gap: not again.
+    monkeypatch.setattr(ops, '_standby_started', [-1e9])
     monkeypatch.setattr(ops, 'standby_alive', lambda: {'pid': 5})
     ops.start_standby('pythonw.exe', 'switch_worker.py', launch)
     monkeypatch.setattr(ops, 'standby_alive', lambda: None)

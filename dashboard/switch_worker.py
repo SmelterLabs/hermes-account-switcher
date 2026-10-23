@@ -5,6 +5,7 @@ loads Hermes ahead of the click, waits up to a few minutes for that click's swit
 import json
 import os
 import sys
+import threading
 import time
 from switch_core import SwitchError, describe, switch_transaction
 from settings import SettingsError, settings_digest
@@ -39,17 +40,23 @@ def main(operation_id):
 
 
 def standby():
-    """Load Hermes now, then take the next switch the dialog starts, or exit after STANDBY_SECONDS."""
+    """Take the next switch the dialog starts, with Hermes already loading or loaded; exit after
+    STANDBY_SECONDS or when this plugin's code changes (an update), and the next status poll starts another.
+
+    It registers at once and watches for a switch from its first moment: a click that comes while Hermes is
+    still loading is taken here and waits only for the rest of that load, never for a second, cold one."""
     writer = None
     try:
         with ops.bound_settings():
-            ops.require_switch_interfaces()
+            code = ops.code_fingerprint()
             writer = ops.HermesWriter()
             writer.start()
-            writer.wait_ready()
-            ops.atomic(ops.STANDBY, {'pid': os.getpid(), 'born': psutil.Process().create_time()})
+            ops.atomic(ops.STANDBY, {'pid': os.getpid(), 'born': psutil.Process().create_time(), 'code': code})
             lock, receipt = ops.LOCK, ops.RECEIPT
+        # The worker's own Hermes imports load beside the writer's; a switch taken meanwhile waits on them.
+        threading.Thread(target=warm_imports, daemon=True).start()
         deadline = time.monotonic() + ops.STANDBY_SECONDS
+        tick = 0
         while time.monotonic() < deadline:
             operation_id = waiting_switch(lock, receipt)
             if operation_id and ops.claim(operation_id):
@@ -57,9 +64,12 @@ def standby():
                     _main_bound(operation_id, writer)
                 writer = None  # The switch closed it.
                 return
+            tick += 1
+            if tick % 50 == 0 and ops.code_fingerprint() != code:
+                return  # Updated: an old standby must not run the new version's switch.
             time.sleep(ops.STANDBY_POLL)
     except BaseException:
-        pass  # A standby that cannot warm up leaves the click to an ordinary worker.
+        pass  # A standby that fails leaves the click to an ordinary worker.
     finally:
         if writer is not None:
             writer.close()
@@ -68,6 +78,13 @@ def standby():
                 ops.STANDBY.unlink()
         except Exception:
             pass
+
+
+def warm_imports():
+    try:
+        ops.require_switch_interfaces()
+    except BaseException:
+        pass  # The switch itself checks again and reports it.
 
 
 def waiting_switch(lock, receipt):
