@@ -227,6 +227,22 @@ def test_a_login_claude_code_signed_out_while_renewing_says_sign_in_again(home, 
         ops.claude_identity('anthropic')
 
 
+def test_a_sign_in_past_its_own_expiry_is_refused_without_renewing(home, monkeypatch):
+    login('anthropic', 'first@example.invalid', expires_in=-10)
+    path = ops.claude_dir('anthropic') / '.credentials.json'
+    data = json.loads(path.read_text(encoding='utf-8'))
+    data['claudeAiOauth']['refreshTokenExpiresAt'] = int((time.time() - 3600) * 1000)
+    path.write_text(json.dumps(data), encoding='utf-8')
+    monkeypatch.setattr(ops, '_handshake', lambda key: pytest.fail('a dead sign-in must not be renewed'))
+    with pytest.raises(SwitchError, match=r'sign-in expired on .*Sign it in again with "setup.cmd claude anthropic"'):
+        ops.claude_identity('anthropic')
+    row = next(r for r in ops.claude_accounts() if r['key'] == 'anthropic')
+    assert row['logged_in'] is False
+    data['claudeAiOauth']['refreshTokenExpiresAt'] = int((time.time() + 86400) * 1000)
+    path.write_text(json.dumps(data), encoding='utf-8')
+    assert next(r for r in ops.claude_accounts() if r['key'] == 'anthropic')['logged_in'] is True
+
+
 def test_handshake_names_why_it_could_not_renew(home, monkeypatch):
     monkeypatch.setattr(ops, 'claude_cli', lambda path=None: None)
     assert ops._handshake('anthropic') == 'Claude Code was not found on this PC'

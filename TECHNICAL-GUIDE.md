@@ -236,7 +236,9 @@ checked against the login, never inferred from a label**.
   folder's `.credentials.json` (its `tengu_oauth_refresh_token_cleared_on_disk` path), and only if the file
   still holds that same refresh token. The switcher never writes the file. Putting the old file back would
   not help: Anthropic refuses that token for every caller. The check names this case and asks for a new
-  sign-in.
+  sign-in. The usual cause is the sign-in's own limit: `refreshTokenExpiresAt` is set at sign-in, about 28
+  days later, and renewals do not move it (seen on the owner's PC, 2026-10-23). `sign_in_expired()` reads it:
+  such an account shows as not logged in, and the check refuses it without renewing.
 - **Claude's sign-in lands as whoever the browser is signed in as.** The identity check catches
   it. A private browser window avoids it.
 - **The identity check reaches Anthropic over the network and can fail for a moment;** it retries
@@ -287,7 +289,7 @@ the interface suite on Linux, on every push to `main` and every pull request. Te
 Windows APIs or drive-letter paths carry `@pytest.mark.windows` and are skipped on other systems,
 so only the Windows job proves them.
 
-Current counts: 411 backend, 49 interface. The 1.2.3 runtime support was proven on the owner's
+Current counts: 412 backend, 49 interface. The 1.2.3 runtime support was proven on the owner's
 PC with one real switch: `docs/receipts/2026-10-17-unified-runtime-owner-pc.json`. Live evidence and what is still not run:
 [docs/acceptance.md](docs/acceptance.md).
 

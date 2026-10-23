@@ -22,6 +22,9 @@ Switching is faster.
   not renew it (or was not found), Anthropic refused it (with the HTTP status), or Anthropic could not be
   reached. If Anthropic has stopped accepting the saved sign-in, Claude Code signs that account out while
   renewing it; the message now says so and asks for a new sign-in instead of "recheck".
+- **A Claude account whose sign-in has run out shows as not logged in.** Anthropic asks for a new sign-in
+  about four weeks after the last one; the window now marks such an account and the switch names the date,
+  instead of trying a renewal that cannot work.
 
 ## 1.4.2
 

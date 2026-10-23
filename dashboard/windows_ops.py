@@ -525,6 +525,14 @@ def _cached_label(key):
         return ''
 
 
+def sign_in_expired(cred):
+    """True when the login's refresh token is past its own expiry (``refreshTokenExpiresAt``, set at sign-in).
+    Anthropic then refuses any renewal, and Claude Code empties the login when one is tried, so the account
+    needs a new sign-in. A login without the field is not judged here."""
+    limit = cred.get('refreshTokenExpiresAt')
+    return isinstance(limit, (int, float)) and not isinstance(limit, bool) and limit > 0 and limit / 1000 <= time.time()
+
+
 def claude_accounts():
     """Cheap, token-free summary for status polling."""
     rows = []
@@ -534,7 +542,7 @@ def claude_accounts():
         except CredentialsUnreadable:
             cred, unreadable = {}, True
         rows.append({'key': key, 'label': label, 'email': email,
-                     'logged_in': bool(cred.get('accessToken') and cred.get('refreshToken')),
+                     'logged_in': bool(cred.get('accessToken') and cred.get('refreshToken')) and not sign_in_expired(cred),
                      # True: a login file exists but was locked or mid-write; not the same as signed out.
                      'unreadable': unreadable,
                      'cached_email': _cached_label(key) or None})
@@ -598,6 +606,11 @@ def claude_identity(key):
         raise busy from None
     if not (cred.get('accessToken') and cred.get('refreshToken')):
         raise SwitchError(f'The {label} Claude login is missing; sign it in with "setup.cmd claude {key}".')
+
+    if sign_in_expired(cred):
+        when = time.strftime('%b %d, %Y', time.localtime(cred['refreshTokenExpiresAt'] / 1000))
+        raise SwitchError(f'The {label} Claude sign-in expired on {when}; Anthropic asks for a new sign-in about four weeks '
+                          f'after the last one. Sign it in again with "setup.cmd claude {key}".')
 
     def expired():
         exp = cred.get('expiresAt')
