@@ -1,5 +1,34 @@
 # Release notes — Hermes Account Switcher
 
+## 1.4.3
+
+Switching takes about two seconds (measured on the owner's PC: 1.9 s, down from about 16 s).
+
+- **Every profile is written at once.** A switch runs Hermes's own commands for each profile, and each
+  one starts Hermes afresh, which takes seconds on Windows. The Claude writes ran one profile after
+  another and the Codex writes eight at a time; now all profiles are written side by side, each still
+  touching only its own files.
+- **The Codex cooldown reset runs only where it is needed.** It used to run for every profile; now only
+  where the chosen login actually carries a cooldown or error, which the receipt names.
+- **One Hermes does all the writing.** Instead of starting Hermes once per profile, the switch starts
+  one Hermes helper while it checks the logins and runs Hermes's own write functions for every profile
+  through it, with Hermes's own file locking. If the helper is unavailable (for example a Hermes update
+  renamed a function), the switch uses the per-profile commands and says so.
+- **The check after the switch no longer asks OpenAI and Anthropic again** for a switch without a
+  restart; both logins were confirmed seconds earlier and nothing about them changed.
+- **Hermes is loaded before you click.** While Hermes Desktop is open, one small waiting worker keeps Hermes
+  loaded for the next switch, so a click no longer waits for Hermes to start. It changes nothing until you
+  switch, and it is replaced every half hour and after an update.
+- **No start-up pause** for a switch that restarts nothing.
+- The window says how many seconds the switch took, and the receipt records each step.
+- **A Claude login that cannot be checked now says why**: its sign-in had expired and Claude Code could
+  not renew it (or was not found), Anthropic refused it (with the HTTP status), or Anthropic could not be
+  reached. If Anthropic has stopped accepting the saved sign-in, Claude Code signs that account out while
+  renewing it; the message now says so and asks for a new sign-in instead of "recheck".
+- **A Claude account whose sign-in has run out shows as not logged in.** Anthropic asks for a new sign-in
+  about four weeks after the last one; the window now marks such an account and the switch names the date,
+  instead of trying a renewal that cannot work. The window warns three days before an account's sign-in runs out.
+
 ## 1.4.2
 
 A Codex switch no longer waits for Hermes to finish what it is doing. Installed on the owner's PC and

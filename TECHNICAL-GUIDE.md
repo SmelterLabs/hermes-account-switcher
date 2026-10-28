@@ -6,7 +6,7 @@ not been proven is in [docs/acceptance.md](docs/acceptance.md).
 
 ## What this is
 
-A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.4.2)
+A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.4.3)
 that switches which Codex login and which Claude subscription account every local Hermes profile
 on the PC uses, through one idle-only, verified restart. It began as a private tool tailored to
 one machine and is packaged here for anyone. **The working behavior was preserved, not
@@ -53,8 +53,41 @@ The release is a "unified package": backend code under
    answer and the window closing is the accepted gap (see the first gotcha).
 3. **Stop**: a polite close of the exact Desktop window, wait for its process tree, stop the
    gateway.
-4. **Apply**: `hermes auth priority` and `hermes auth reset` per Codex store; `.env` write or
-   removal per home for Claude; every store read back.
+4. **Apply**: `hermes auth priority` per Codex store, plus `hermes auth reset` only where the target
+   login carries a status (`needs_reset`, the fields Hermes's own reset checks; the receipt's
+   `codex_applied.reset_profiles` names them); the `.env` variable and then the provider setting per
+   home for Claude; every store read back. Each command starts a fresh Hermes Python, so all profiles
+   are written side by side in one round (`side_by_side`, up to `PROFILE_PARALLEL` = 16); every profile
+   writes only its own `auth.json`, `.env` and `config.yaml`, and within one profile the commands stay
+   in order. The receipt times each step (`worker_started`, `checked`, `codex_applied`,
+   `claude_applied`, `verified`). A switch without a restart skips the worker's 3 s render pause.
+
+   **In-process writer (1.4.3, the fast path).** Preflight starts `dashboard/hermes_writer.py` with
+   Hermes's own Python before the network checks, so its Hermes import overlaps them (the OpenAI quota
+   check and the Anthropic identity check also run side by side). It imports and checks
+   `set_hermes_home_override` / `reset_hermes_home_override`, `load_pool`, `CredentialPool.move_entry` /
+   `reset_status`, `save_env_value` / `remove_env_value` and `set_config_value`, then answers one JSON
+   job per line, running exactly what the commands run for every home under Hermes's own home override
+   (auth.lock, atomic saves). It never writes a file itself and reports only error type names. If it is
+   not ready, does not answer, or a job fails, that switch uses the per-profile commands above; the
+   receipt says `writer: hermes` or `writer: commands` plus `writer_fallback`, and the dialog's
+   completion line names the reason. A live verify reads the stores back but does not ask OpenAI or
+   Anthropic again: preflight already confirmed both logins and a live switch changes no login.
+
+   **Standby worker (1.4.3).** On the unified runtime `/status` (polled while Hermes Desktop shows the
+   plugin) and `/preflight` keep one worker started with the argument `standby` (`arm_standby` →
+   `start_standby`, at most one, `STANDBY_START_GAP` between starts, recorded in
+   `logs/account-switcher-standby.json` with a `code_fingerprint()`). It registers at once, starts the
+   writer and loads the switch's Hermes interfaces on a thread, and from its first moment polls for a switch
+   whose receipt says `standby: true`, so a click during the load waits only for the rest of it. It retires
+   after `STANDBY_SECONDS` (30 min) or when the plugin's code changes, and the next poll starts another.
+   Cost: one idle worker and one idle Hermes helper while Desktop is open. `/switch` writes that receipt and waits up to
+   `STANDBY_CLAIM_WAIT` for the standby to create the operation's claim file (`claim()`, exclusive create);
+   if none appears the route creates it itself and launches an ordinary worker, so exactly one worker runs
+   each switch. A standby holds no lock and changes nothing while it waits. Abandoned-lock recovery ignores a standby. The receipt notes `worker: standby`; the `checked`
+   checkpoint's `parts` split its seconds into `interfaces`, `local`, `openai` and `anthropic`, and
+   `codex_applied.hermes_ready_after` and `writer_seconds` show the helper's import and job times. A live
+   verify scans processes once and skips the service-owner re-check (nothing was stopped or started).
 5. **Start**: the gateway, its health, then Hermes Desktop through the Windows shell so it gets
    the user's environment and not the worker's.
 6. **Verify**: new process ids, every reopened backend's own state, every stored order, Claude
@@ -211,6 +244,17 @@ checked against the login, never inferred from a label**.
 - **The Claude provider installs as `claude-subscription-directsdk-experimental`**, its catalog
   name is `claude-subscription-directsdk`, and as a model provider it needs no `enabled` entry.
   Only an explicit `disabled` entry counts against it.
+- **A switch can find a Claude login already dead, and Claude Code then empties it.** The idle account's
+  access token has usually expired, so the identity check lets Claude Code renew it (`_handshake`). If
+  Anthropic answers that renewal with `invalid_grant` (the saved refresh token was revoked, expired or
+  already used), Claude Code 2.1.x itself blanks `accessToken`, `refreshToken` and `expiresAt` in that
+  folder's `.credentials.json` (its `tengu_oauth_refresh_token_cleared_on_disk` path), and only if the file
+  still holds that same refresh token. The switcher never writes the file. Putting the old file back would
+  not help: Anthropic refuses that token for every caller. The check names this case and asks for a new
+  sign-in. The usual cause is the sign-in's own limit: `refreshTokenExpiresAt` is set at sign-in, about 28
+  days later, and renewals do not move it (seen on the owner's PC, 2026-10-23). `sign_in_expired()` reads it:
+  such an account shows as not logged in, and the check refuses it without renewing.
+  `sign_in_warnings()` adds a Claude notice to the dialog from `SIGN_IN_NOTICE_DAYS` (3) before that date.
 - **Claude's sign-in lands as whoever the browser is signed in as.** The identity check catches
   it. A private browser window avoids it.
 - **The identity check reaches Anthropic over the network and can fail for a moment;** it retries
@@ -261,7 +305,7 @@ the interface suite on Linux, on every push to `main` and every pull request. Te
 Windows APIs or drive-letter paths carry `@pytest.mark.windows` and are skipped on other systems,
 so only the Windows job proves them.
 
-Current counts: 391 backend, 49 interface. The 1.2.3 runtime support was proven on the owner's
+Current counts: 424 backend, 50 interface. The 1.2.3 runtime support was proven on the owner's
 PC with one real switch: `docs/receipts/2026-10-17-unified-runtime-owner-pc.json`. Live evidence and what is still not run:
 [docs/acceptance.md](docs/acceptance.md).
 

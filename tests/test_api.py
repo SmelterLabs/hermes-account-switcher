@@ -48,7 +48,7 @@ def test_status_contract_and_secret_allowlist(client, monkeypatch):
     data = response.json()
     assert data['codex']['selected'] == 'personal'
     assert [a['label'] for a in data['codex']['accounts']] == ['Personal', 'Work']
-    assert data['claude'] == {'selected': None, 'state': 'unset', 'accounts': CLAUDE_ROWS}
+    assert data['claude'] == {'selected': None, 'state': 'unset', 'accounts': CLAUDE_ROWS, 'warnings': []}
     assert data['scope'] == 'All Hermes profiles on this PC'
     assert data['blockers'] == [] and data['in_progress'] is False and data['last_operation'] is None
     assert 'access_token' not in response.text and 'account-one' not in response.text

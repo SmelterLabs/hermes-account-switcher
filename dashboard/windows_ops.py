@@ -1,6 +1,7 @@
 """Bounded Windows operations. Never returns credential/token values to callers."""
 import json
 import os
+import queue
 import re
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -46,8 +47,10 @@ def runtime_python():
 
 RECEIPT = ROOT / 'logs/account-switcher-last.json'
 LOCK = ROOT / 'logs/account-switcher.lock'
+STANDBY = ROOT / 'logs/account-switcher-standby.json'
 NS = '/api/plugins/account-switcher'
 ENV_SET = Path(__file__).resolve().with_name('env_set.py')
+WRITER = Path(__file__).resolve().with_name('hermes_writer.py')
 
 # Claude: the DirectSDK plugin hands the `claude` CLI a login folder as CLAUDE_CONFIG_DIR on every spawn. It takes
 # the folder from its per-profile `claude_config_dir` setting in config.yaml (provider 0.3.1 on, re-read on every
@@ -68,12 +71,13 @@ _PATH_LOCK = threading.RLock()
 
 def configure_paths(settings=None):
     """Bind every mutable runtime path from the same validated settings object."""
-    global ROOT, EXE, RECEIPT, LOCK, CLAUDE_AUTH
+    global ROOT, EXE, RECEIPT, LOCK, STANDBY, CLAUDE_AUTH
     settings = settings or load_settings()
     ROOT = settings.hermes_root
     EXE = settings.desktop_exe
     RECEIPT = ROOT / 'logs/account-switcher-last.json'
     LOCK = ROOT / 'logs/account-switcher.lock'
+    STANDBY = ROOT / 'logs/account-switcher-standby.json'
     CLAUDE_AUTH = ROOT / 'claude-auth'
     return settings
 
@@ -168,7 +172,10 @@ def recover_abandoned_check():
             if (process.info['name'] or '').lower() != 'pythonw.exe':
                 continue
             args = process.info['cmdline']
-            if args is None or any(str(arg).endswith('switch_worker.py') for arg in args):
+            if args is None:
+                return
+            # A standby worker waits for a switch that has not been made; it is not this switch's worker.
+            if any(str(arg).endswith('switch_worker.py') for arg in args) and 'standby' not in args:
                 return
         if LOCK.read_bytes() != raw:
             return
@@ -523,6 +530,14 @@ def _cached_label(key):
         return ''
 
 
+def sign_in_expired(cred):
+    """True when the login's refresh token is past its own expiry (``refreshTokenExpiresAt``, set at sign-in).
+    Anthropic then refuses any renewal, and Claude Code empties the login when one is tried, so the account
+    needs a new sign-in. A login without the field is not judged here."""
+    limit = cred.get('refreshTokenExpiresAt')
+    return isinstance(limit, (int, float)) and not isinstance(limit, bool) and limit > 0 and limit / 1000 <= time.time()
+
+
 def claude_accounts():
     """Cheap, token-free summary for status polling."""
     rows = []
@@ -532,11 +547,42 @@ def claude_accounts():
         except CredentialsUnreadable:
             cred, unreadable = {}, True
         rows.append({'key': key, 'label': label, 'email': email,
-                     'logged_in': bool(cred.get('accessToken') and cred.get('refreshToken')),
+                     'logged_in': bool(cred.get('accessToken') and cred.get('refreshToken')) and not sign_in_expired(cred),
                      # True: a login file exists but was locked or mid-write; not the same as signed out.
                      'unreadable': unreadable,
-                     'cached_email': _cached_label(key) or None})
+                     'cached_email': _cached_label(key) or None,
+                     'sign_in_ends': sign_in_ends(cred)})
     return rows
+
+
+# How long before a Claude sign-in runs out the window starts saying so.
+SIGN_IN_NOTICE_DAYS = 3
+
+
+def sign_in_ends(cred):
+    """When the login's sign-in runs out, in seconds since the epoch, or None when the file does not say."""
+    limit = cred.get('refreshTokenExpiresAt')
+    if not cred.get('refreshToken') or isinstance(limit, bool) or not isinstance(limit, (int, float)) or limit <= 0:
+        return None
+    return limit / 1000
+
+
+def sign_in_warnings(rows, now=None):
+    """A line per Claude account whose sign-in has run out or runs out within SIGN_IN_NOTICE_DAYS."""
+    now = time.time() if now is None else now
+    lines = []
+    for row in rows:
+        ends = row.get('sign_in_ends')
+        if ends is None or ends - now > SIGN_IN_NOTICE_DAYS * 86400:
+            continue
+        name = f"Claude {row['label']}"
+        if ends <= now:
+            lines.append(f'The {name} sign-in has run out; sign it in again with "setup.cmd claude {row["key"]}".')
+        else:
+            when = time.strftime('%b %d at %I:%M %p', time.localtime(ends)).replace(' 0', ' ')
+            lines.append(f'The {name} sign-in runs out on {when}; sign it in again before then with '
+                         f'"setup.cmd claude {row["key"]}" so switching to it keeps working.')
+    return lines
 
 
 def _oauth_profile(token):
@@ -568,14 +614,17 @@ def _handshake(key, timeout=60):
     handshake = json.dumps({'type': 'control_request', 'request_id': 'switch', 'request': {'subtype': 'initialize'}}) + '\n'
     exe = claude_cli(env.get('PATH'))
     if exe is None:
-        return
+        return 'Claude Code was not found on this PC'
     argv[0] = exe
     try:
         with tempfile.TemporaryDirectory(prefix='claude-switch-handshake-') as cwd:
             subprocess.run(argv, input=handshake, env=env, cwd=cwd, capture_output=True, text=True,
                            encoding='utf-8', errors='replace', timeout=timeout, **hidden_console())
-    except (OSError, subprocess.SubprocessError):
-        pass
+    except subprocess.TimeoutExpired:
+        return 'Claude Code did not finish renewing it in time'
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f'Claude Code could not be started ({type(exc).__name__})'
+    return None
 
 
 def claude_identity(key):
@@ -594,30 +643,50 @@ def claude_identity(key):
     if not (cred.get('accessToken') and cred.get('refreshToken')):
         raise SwitchError(f'The {label} Claude login is missing; sign it in with "setup.cmd claude {key}".')
 
+    if sign_in_expired(cred):
+        when = time.strftime('%b %d, %Y', time.localtime(cred['refreshTokenExpiresAt'] / 1000))
+        raise SwitchError(f'The {label} Claude sign-in expired on {when}; Anthropic asks for a new sign-in about four weeks '
+                          f'after the last one. Sign it in again with "setup.cmd claude {key}".')
+
     def expired():
         exp = cred.get('expiresAt')
         return not isinstance(exp, (int, float)) or exp / 1000 <= time.time() + 60
 
+    # Why it could not be verified, named in the message so a receipt tells an expired sign-in from a
+    # network problem. Only an exception's type or an HTTP status is named, never response text.
+    reason = None
     if expired():
-        _handshake(key)
+        problem = _handshake(key)
         try:
             cred = _credentials(key)
         except CredentialsUnreadable:
             raise busy from None
+        if not cred.get('refreshToken'):
+            # Claude Code empties the login itself when Anthropic answers its renewal with invalid_grant: the
+            # saved sign-in was already refused (revoked, expired or used elsewhere). Nothing here wrote it.
+            raise SwitchError(f'Anthropic no longer accepts the saved {label} Claude sign-in, so Claude Code signed it '
+                              f'out while renewing it. Sign it in again with "setup.cmd claude {key}".')
+        if expired():
+            reason = f'its sign-in had expired and {problem or "Claude Code did not renew it"}'
     if not expired():
         email = ''
         for attempt in range(2):  # One network blip must not read as an unverifiable login.
             try:
                 email = _oauth_profile(cred['accessToken'])
                 break
-            except Exception:
+            except Exception as exc:
+                code = getattr(exc, 'code', None)
+                reason = (f'Anthropic answered HTTP {code}' if isinstance(code, int)
+                          else f'Anthropic could not be reached ({type(exc).__name__})')
                 if attempt == 0:
                     time.sleep(2)
         if email:
             if email != expected:
                 raise WrongAccount(f'The {label} Claude folder is logged in as {email}, not {expected}; sign it in again with "setup.cmd claude {key}".')
             return {'email': email, 'method': 'token'}
-    raise SwitchError(f'The {label} Claude login could not be verified with Anthropic; recheck, and if this stays sign it in again with "setup.cmd claude {key}".')
+        reason = reason or 'Anthropic returned no account'
+    raise SwitchError(f'The {label} Claude login could not be verified with Anthropic ({reason}); recheck, and if this '
+                      f'stays sign it in again with "setup.cmd claude {key}".')
 
 
 def claude_value(key):
@@ -625,17 +694,27 @@ def claude_value(key):
     return claude_dir(key).resolve().as_posix()
 
 
-def apply_claude(key, allow_changed=False):
+def apply_claude(key, allow_changed=False, writer=None, record=None):
     """Point every store at the folder for ``key``, in both places the provider reads: its ``claude_config_dir``
     setting (applies to the next spawn) and the .env variable (applies after a gateway start, and to providers
     before 0.3.1). ``'unset'`` clears both (plugin default)."""
-    for home in profile_homes():
-        if not allow_changed:
-            ensure_settings_unchanged()
-        value = '--remove' if key == 'unset' else claude_value(key)
+    # Each profile's .env and config.yaml are its own; profiles are written side by side, and within one the
+    # .env first, then the setting, as before.
+    if not allow_changed:
+        ensure_settings_unchanged()
+    value = '--remove' if key == 'unset' else claude_value(key)
+
+    def write(home):
         command([str(runtime_python()), str(ENV_SET), CLAUDE_VAR, value], home=home)
         command([str(runtime_python()), '-m', 'hermes_cli.main', 'config', 'set', CLAUDE_SETTING,
                  '' if key == 'unset' else value], home=home)
+    homes = profile_homes()
+    job = {'claude': {'homes': [str(home) for home in homes], 'variable': CLAUDE_VAR, 'setting': CLAUDE_SETTING,
+                      'value': None if key == 'unset' else value}}
+    if not written_by_hermes(writer, job, record):
+        side_by_side(write, homes)
+    if not allow_changed:
+        ensure_settings_unchanged()
     state = claude_selection()
     if key == 'unset':
         if state['state'] != 'unset':
@@ -946,10 +1025,12 @@ def selection_summary():
     # The badge must show which account is really paying, not just the configured order: a dead
     # preferred login silently falls through to the next account.
     warnings = [w for w in (health_warning(home_name(home), acc, now) for home, acc in stores) if w]
+    rows = claude_accounts()
     actual = {effective(acc, now) for _, acc in stores}
     return {'codex': {'selected': common_selection(stores), 'accounts': summaries(stores[0][1]) if stores else [],
                       'effective': actual.pop() if len(actual) == 1 else None, 'warnings': warnings},
-            'claude': {'selected': claude['selected'], 'state': claude['state'], 'accounts': claude_accounts()}}
+            'claude': {'selected': claude['selected'], 'state': claude['state'], 'accounts': rows,
+                       'warnings': sign_in_warnings(rows, now)}}
 
 
 def preflight(own_state=None):
@@ -1055,31 +1136,235 @@ def launch_desktop():
                      stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
 
 
-# Each store's two Hermes commands start a fresh Python, a few seconds each. Run one after another across ten
-# profiles they kept the gateway down for about a minute on the owner's PC (2026-10-21), long enough for Hermes
-# Desktop to start a gateway of its own that the restarted one then had to replace. Stores are separate files,
-# so they are reordered side by side; within a store the order stays priority, then reset.
-CODEX_PARALLEL = 8
+# Each Hermes command starts a fresh Python, a few seconds each on Windows. Run one after another across ten
+# profiles they kept the gateway down for about a minute on the owner's PC (2026-10-21), and a live switch still
+# took 76 s (2026-10-22). Every profile keeps its own files, so all of them are written side by side in one
+# round; within a profile the commands stay in order.
+PROFILE_PARALLEL = 16
+CODEX_PARALLEL = PROFILE_PARALLEL
 
 
-def reorder_codex_stores(target, homes=None, reset=True):
-    """Put `target` first in every Codex store, or only in `homes`. `reset` also clears the target's cooldown;
-    a repair after a revert skips it, so the order is back in one command."""
-    def reorder(home, acc):
-        target_id = acc[target]['entry']['id']
-        command([str(runtime_python()), '-m', 'hermes_cli.main', 'auth', 'priority', 'openai-codex', target_id, '0'], home=home)
-        if reset:
-            command([str(runtime_python()), '-m', 'hermes_cli.main', 'auth', 'reset', 'openai-codex', target_id], home=home)
-
-    stores = [(home, acc) for home, acc in codex_stores() if homes is None or home in homes]
-    if not stores:
-        return
-    with ThreadPoolExecutor(max_workers=min(CODEX_PARALLEL, len(stores))) as pool:
-        futures = [pool.submit(reorder, home, acc) for home, acc in stores]
+def side_by_side(work, items):
+    """Run `work(item)` for every item at once (up to PROFILE_PARALLEL); raise the first error after all finish."""
+    items = list(items)
+    if not items:
+        return []
+    with ThreadPoolExecutor(max_workers=min(PROFILE_PARALLEL, len(items))) as pool:
+        futures = [pool.submit(work, item) for item in items]
         errors = [future.exception() for future in futures]
     first = next((error for error in errors if error is not None), None)
     if first is not None:
         raise first
+    return [future.result() for future in futures]
+
+
+# The fields Hermes's own `auth reset` looks at to decide a login has a status to clear
+# (agent/credential_pool_admin.py reset_statuses); `failure_reason` sits in the row's extra fields.
+STATUS_FIELDS = ('last_status', 'last_status_at', 'last_error_code', 'failure_reason', 'model_cooldowns')
+
+
+def needs_reset(entry):
+    return any(entry.get(field) for field in STATUS_FIELDS)
+
+
+def reorder_codex_stores(target, homes=None, reset=True):
+    """Put `target` first in every Codex store, or only in `homes`, and return the profiles whose target login
+    also had a cooldown or error cleared. `reset` allows that clearing; it runs only where the login carries a
+    status (usually none), and a repair after a revert never needs it."""
+    def reorder(store):
+        home, acc = store
+        target_id = acc[target]['entry']['id']
+        command([str(runtime_python()), '-m', 'hermes_cli.main', 'auth', 'priority', 'openai-codex', target_id, '0'], home=home)
+        if reset and needs_reset(acc[target]['entry']):
+            command([str(runtime_python()), '-m', 'hermes_cli.main', 'auth', 'reset', 'openai-codex', target_id], home=home)
+            return home_name(home)
+        return None
+
+    stores = [(home, acc) for home, acc in codex_stores() if homes is None or home in homes]
+    return [name for name in side_by_side(reorder, stores) if name]
+
+
+# How long a switch waits for the in-process writer's Hermes import before using the commands instead.
+WRITER_READY_WAIT = 30
+WRITER_JOB_WAIT = 60
+
+
+# A standby worker: started when the dialog opens, it loads Hermes (its own imports and the writer's) before
+# the click, then waits for that click's switch. It holds no lock and changes nothing while it waits.
+# It stays armed while Hermes Desktop is open: the status poll starts the next one.
+STANDBY_SECONDS = 30 * 60
+STANDBY_POLL = 0.1
+# How long the switch route waits for a standby to take its switch before launching a worker itself.
+STANDBY_CLAIM_WAIT = 1.5
+
+
+def claim_file(operation_id):
+    return LOCK.with_name(f'{LOCK.name}.{operation_id}.claim')
+
+
+def claim(operation_id):
+    """Exactly one worker runs a switch: the first to create its claim file."""
+    try:
+        with claim_file(operation_id).open('x', encoding='utf-8') as f:
+            f.write(str(os.getpid()))
+        return True
+    except FileExistsError:
+        return False
+
+
+def code_fingerprint():
+    """Size and time of this plugin's switch code, so a standby from before an update is never used."""
+    here = Path(__file__).resolve().parent
+    parts = []
+    for name in ('switch_worker.py', 'windows_ops.py', 'switch_core.py', 'hermes_writer.py', 'compat.py', 'settings.py'):
+        try:
+            info = (here / name).stat()
+            parts.append(f'{name}:{info.st_size}:{int(info.st_mtime)}')
+        except OSError:
+            parts.append(f'{name}:missing')
+    return '|'.join(parts)
+
+
+def standby_alive():
+    """The standby worker's record when that process is still alive, has not given up, and runs this code."""
+    try:
+        data = json.loads(STANDBY.read_text(encoding='utf-8'))
+        process = psutil.Process(data['pid'])
+        if (abs(process.create_time() - data['born']) > 1 or time.time() - data['born'] > STANDBY_SECONDS
+                or data.get('code') != code_fingerprint()):
+            return None
+        return data
+    except Exception:
+        return None
+
+
+# A standby needs a moment to register itself; the status poll and the dialog's check must not both start one.
+STANDBY_START_GAP = 20
+_standby_started = [0.0]
+_standby_lock = threading.Lock()
+
+
+def start_standby(pythonw, worker, launch):
+    """Start a standby worker unless one is waiting already. Never fails the caller."""
+    try:
+        with _standby_lock:
+            if (standby_alive() is not None or LOCK.exists()
+                    or time.monotonic() - _standby_started[0] < STANDBY_START_GAP):
+                return
+            _standby_started[0] = time.monotonic()
+        launch(pythonw, worker, 'standby', ROOT)
+    except Exception:
+        pass
+
+
+class HermesWriter:
+    """The hermes_writer.py helper: one Hermes Python, started at the beginning of a switch, that runs Hermes's
+    own write functions for every profile. When it cannot start, is missing a Hermes function, or fails a job,
+    the switch uses the per-profile commands instead and the receipt says why (`writer_fallback`)."""
+
+    def __init__(self):
+        self.process = None
+        self.lines = queue.Queue()
+        self.ready = None
+        self.reason = None
+        self.began = None
+        # Seconds from start to its ready line (Hermes's import), for the receipt.
+        self.ready_after = None
+
+    def start(self):
+        self.began = time.monotonic()
+        try:
+            self.process = subprocess.Popen(
+                [str(runtime_python()), str(WRITER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, text=True, encoding='utf-8', cwd=str(WRITER.parent), env=clean_env(ROOT),
+                **hidden_console())
+        except Exception as exc:
+            self.ready, self.reason = False, f'could not start ({type(exc).__name__})'
+            return
+        threading.Thread(target=self._read_lines, daemon=True).start()
+
+    def _read_lines(self):
+        for line in self.process.stdout:
+            self.lines.put(line)
+        self.lines.put(None)
+
+    def _answer(self, timeout):
+        try:
+            line = self.lines.get(timeout=timeout)
+            return json.loads(line) if line else None
+        except (queue.Empty, ValueError):
+            return None
+
+    def wait_ready(self):
+        """Wait for the ready line once; True when jobs can be sent."""
+        if self.ready is None:
+            answer = self._answer(WRITER_READY_WAIT)
+            self.ready = bool(answer and answer.get('ready'))
+            if self.ready:
+                self.ready_after = round(time.monotonic() - self.began, 1)
+            else:
+                self.reason = ('a Hermes function it needs is missing or changed ({})'.format(answer.get('reason'))
+                               if answer else 'it did not start in time')
+        return self.ready
+
+    def run(self, job):
+        """The answer to `job`, or None when the commands must be used instead."""
+        if not self.wait_ready():
+            self.close()
+            return None
+        try:
+            self.process.stdin.write(json.dumps(job) + '\n')
+            self.process.stdin.flush()
+        except (OSError, ValueError):
+            answer = None
+        else:
+            answer = self._answer(WRITER_JOB_WAIT)
+        if not answer or not answer.get('ok'):
+            self.ready = False
+            self.reason = f"a write failed ({answer.get('error')})" if answer else 'it stopped answering'
+            self.close()
+            return None
+        return answer
+
+    def close(self):
+        if self.process is None:
+            return
+        try:
+            self.process.stdin.close()
+            self.process.wait(timeout=5)
+        except Exception:
+            try:
+                self.process.kill()
+            except Exception:
+                pass
+        self.process = None
+
+
+def written_by_hermes(writer, job, record):
+    """Run `job` in the writer; False (and the reason in the receipt) when the commands must do it."""
+    answer = writer.run(job) if writer is not None else None
+    if record is not None:
+        if answer is not None:
+            record.setdefault('writer', 'hermes')
+            # Seconds Hermes's own functions took for this job, inside the helper.
+            record.setdefault('writer_seconds', []).append(answer.get('seconds'))
+        elif writer is not None:
+            record['writer'] = 'commands'
+            record['writer_fallback'] = writer.reason
+    return answer if answer is not None else False
+
+
+def apply_codex(target, writer=None, record=None):
+    """Put `target` first in every Codex store through the writer, else the commands; returns the profiles where
+    the target login's cooldown or error was also cleared."""
+    stores = codex_stores()
+    job = {'codex': [{'home': str(home), 'id': acc[target]['entry']['id'], 'reset': needs_reset(acc[target]['entry'])}
+                     for home, acc in stores]}
+    answer = written_by_hermes(writer, job, record)
+    if answer:
+        names = {str(home): home_name(home) for home, _ in stores}
+        return [names[path] for path in answer['reset']]
+    return reorder_codex_stores(target)
 
 
 # After a live Codex switch, a turn that was already running keeps its own copy of the Codex pool. Hermes writes
@@ -1198,7 +1483,7 @@ def revert_warning(last, summary):
 
 
 class WindowsOps:
-    def __init__(self, record):
+    def __init__(self, record, writer=None):
         self.record = record
         self.bs = []
         self.drained = []
@@ -1213,6 +1498,8 @@ class WindowsOps:
         # Live switch: nothing restarts and nothing is held. The stores change beside running work; each chat
         # reads them on its next turn. A turn already running finishes on the account it started with.
         self.live = False
+        # The in-process writer (HermesWriter): a warm one from a standby worker, else started in preflight.
+        self.writer = writer
 
     def stage(self, name):
         self.record['state'] = name
@@ -1228,6 +1515,9 @@ class WindowsOps:
         atomic(RECEIPT, self.record)
 
     def preflight(self, request):
+        began = time.monotonic()
+        # Where the check's seconds go, for the receipt's `checked` checkpoint.
+        parts = {}
         ensure_settings_unchanged()
         try:
             require_switch_interfaces()
@@ -1236,7 +1526,15 @@ class WindowsOps:
         runtime_python()  # Fail before any process or credential mutation.
         if load_settings().gateway_service is None:
             hermes_launcher()
+        parts['interfaces'] = round(time.monotonic() - began, 1)
+        if self.writer is None:
+            # Hermes's import takes seconds; let it load while the checks below run.
+            self.writer = HermesWriter()
+            self.writer.start()
+        else:
+            self.record['worker'] = 'standby'
         self.stage('checking')
+        mark = time.monotonic()
         p = preflight()
         self.hosted = gateway_hosts_desktop()
         self.gateway = self.hosted or gateway_in_use()
@@ -1249,18 +1547,34 @@ class WindowsOps:
             if p['codex']['selected'] not in EMAILS:
                 raise SwitchError('Current Codex account priority is ambiguous.')
             target = accounts()[request['codex']]
+            previous['codex'] = p['codex']['selected']
+        if request.get('claude'):
+            previous['claude'] = p['claude']['selected'] if p['claude']['state'] == 'set' else 'unset'
+        parts['local'] = round(time.monotonic() - mark, 1)
+        # The OpenAI and Anthropic checks are independent network calls; run them side by side.
+        checks = []
+
+        def timed(name, check):
+            def run():
+                start = time.monotonic()
+                try:
+                    return check()
+                finally:
+                    parts[name] = round(time.monotonic() - start, 1)
+            return run
+        if request.get('codex'):
             # The other account is the idle one by definition, so its access token has often lapsed; asking
             # OpenAI with it would only read as "could not confirm". Hermes renews it at first use.
             note = lapsed_note(target)
             if note:
                 self.warn(note)
             else:
-                usage(target)
-            previous['codex'] = p['codex']['selected']
+                checks.append(timed('openai', lambda: usage(target)))
         if request.get('claude'):
-            identity = claude_identity(request['claude'])
-            self.record['claude_identity_before'] = identity['method']
-            previous['claude'] = p['claude']['selected'] if p['claude']['state'] == 'set' else 'unset'
+            def identify_claude():
+                self.record['claude_identity_before'] = claude_identity(request['claude'])['method']
+            checks.append(timed('anthropic', identify_claude))
+        side_by_side(lambda check: check(), checks)
         if not self.hosted:
             self.old_main = desktop()
             self.bs = backends(self.old_main)
@@ -1268,6 +1582,7 @@ class WindowsOps:
         self.record.update(previous=previous, desktop_restarts=not self.hosted, restarts=not self.live,
                            old_desktop_pid=self.old_main.pid if self.old_main else None,
                            old_gateway_pid=self.old_gateway[0] if self.gateway else None)
+        self.checkpoint('checked', seconds=round(time.monotonic() - began, 1), parts=parts)
         return {'previous': previous}
 
     def freeze(self):
@@ -1379,14 +1694,18 @@ class WindowsOps:
             if not allow_changed:
                 ensure_settings_unchanged()
             began = time.monotonic()
-            reorder_codex_stores(target)
+            reset = apply_codex(target, self.writer, self.record)
             if not allow_changed:
                 ensure_settings_unchanged()
-            self.checkpoint('codex_applied', seconds=round(time.monotonic() - began, 1))
+            # `reset_profiles`: where the target login had a cooldown or error, so `auth reset` ran as well.
+            self.checkpoint('codex_applied', seconds=round(time.monotonic() - began, 1), reset_profiles=reset,
+                            hermes_ready_after=getattr(self.writer, 'ready_after', None))
             if common_selection(codex_stores()) != target:
                 raise SwitchError('Saved account readback does not match the requested account in every profile.')
         if request.get('claude'):
-            apply_claude(request['claude'], allow_changed=allow_changed)
+            began = time.monotonic()
+            apply_claude(request['claude'], allow_changed=allow_changed, writer=self.writer, record=self.record)
+            self.checkpoint('claude_applied', seconds=round(time.monotonic() - began, 1))
 
     def start(self):
         if self.live:
@@ -1403,13 +1722,15 @@ class WindowsOps:
             launch_desktop()
 
     def verify(self, request):
+        self.verify_began = time.monotonic()
         self.stage('verifying')
         codex_target = request.get('codex')
         claude_target = request.get('claude')
         if self.live:
             # Nothing restarted: the stores are the evidence, and the gateway reads them on its next turn.
-            result = {'new_desktop_pid': None, 'new_gateway_pid': None, 'gateway_pid': service()['pid'],
-                      'restarted': False, 'profiles': [{'profile': 'gateway', 'pid': service()['pid']}]}
+            pid = service()['pid']
+            result = {'new_desktop_pid': None, 'new_gateway_pid': None, 'gateway_pid': pid,
+                      'restarted': False, 'profiles': [{'profile': 'gateway', 'pid': pid}]}
             return self.verify_stores(request, result)
         if self.hosted:
             # The gateway is the only account consumer; Desktop was never closed and reattaches by itself.
@@ -1481,18 +1802,22 @@ class WindowsOps:
                  'user guide), then restart it.')
 
     def verify_stores(self, request, result):
-        self.verify_service_owner()
+        if not self.live:
+            # A live switch stopped and started nothing; preflight already proved who owns the gateway.
+            self.verify_service_owner()
         codex_target = request.get('codex')
         claude_target = request.get('claude')
         if codex_target:
             # Cold profiles have no process; their saved stores must also try the target first.
             if common_selection(codex_stores()) != codex_target:
                 raise SwitchError('A saved profile store does not try the selected Codex account first.')
-            # Quota availability was proven in preflight; after the restart it is advisory only.
-            try:
-                usage(accounts()[codex_target])
-            except SwitchError as exc:
-                self.warn(f'Switch verified; OpenAI quota re-check failed afterwards: {exc}')
+            # Quota availability was proven in preflight; after a restart it is advisory only. A switch without a
+            # restart changed nothing OpenAI can see, so it skips the second call.
+            if not self.live:
+                try:
+                    usage(accounts()[codex_target])
+                except SwitchError as exc:
+                    self.warn(f'Switch verified; OpenAI quota re-check failed afterwards: {exc}')
             result['codex'] = codex_target
             previous = (self.record.get('previous') or {}).get('codex')
             if self.live and previous and previous != codex_target:
@@ -1503,9 +1828,13 @@ class WindowsOps:
             state = claude_selection()
             if state['state'] != 'set' or state['selected'] != claude_target:
                 raise SwitchError('A saved profile store does not name the selected Claude account.')
-            identity = claude_identity(claude_target)
+            # Preflight proved who owns the target folder's login and a switch without a restart does not touch
+            # it; after a restart the provider may have refreshed it, so it is asked again.
+            method = self.record.get('claude_identity_before') if self.live else None
             result['claude'] = claude_target
-            result['claude_identity'] = identity['method']
+            result['claude_identity'] = method or claude_identity(claude_target)['method']
+        if getattr(self, 'verify_began', None) is not None:
+            self.checkpoint('verified', seconds=round(time.monotonic() - self.verify_began, 1))
         return result
 
     def recover(self, previous, changed):
@@ -1542,3 +1871,5 @@ class WindowsOps:
 
     def unfreeze(self):
         self.clear_drains()
+        if self.writer is not None:
+            self.writer.close()

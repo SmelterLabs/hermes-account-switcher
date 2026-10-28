@@ -479,6 +479,17 @@ describe('account-switcher desktop plugin', () => {
     expect(await screen.findByText(warning)).toBeTruthy()
   })
 
+  it('shows a Claude sign-in that runs out soon in the dialog', async () => {
+    const warning = 'The Claude Work sign-in runs out on Nov 18 at 4:12 AM; sign it in again before then with "setup.cmd claude work" so switching to it keeps working.'
+    const status = { ...STATUS_PERSONAL_IDLE, claude: { ...STATUS_PERSONAL_IDLE.claude, warnings: [warning] } }
+    const rest = makeRest({ status: [status], preflight: [preflightFor(status)] })
+    const { statusContribution } = registerWith(rest)
+    render(statusContribution.render())
+    fireEvent.click(await screen.findByRole('button', { name: /^Codex: / }))
+    expect(await screen.findByText('Claude sign-in needs attention')).toBeTruthy()
+    expect(screen.getByText(warning)).toBeTruthy()
+  })
+
   it('fails closed when pre-flight blockers are present and never posts a switch', async () => {
     const rest = makeRest({ preflight: [PREFLIGHT_BLOCKED] })
     await openDialog(rest)

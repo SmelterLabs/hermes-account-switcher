@@ -1,3 +1,3 @@
 name: account-switcher
-version: "1.4.2"
+version: "1.4.3"
 description: Windows-only, PC-wide Codex and Claude account selection with idle-only restart and verification.
