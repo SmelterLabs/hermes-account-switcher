@@ -1,8 +1,8 @@
 # Release notes — Hermes Account Switcher
 
-## Unreleased
+## 1.4.3
 
-Switching is faster.
+Switching takes about two seconds (measured on the owner's PC: 1.9 s, down from about 16 s).
 
 - **Every profile is written at once.** A switch runs Hermes's own commands for each profile, and each
   one starts Hermes afresh, which takes seconds on Windows. The Claude writes ran one profile after

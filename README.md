@@ -7,14 +7,17 @@ open and reconnects. The status-bar dialog reports success only from a post-rest
 receipt: an accepted request is never treated as a completed switch.
 
 - Plugin ID: `account-switcher`
-- Version: **1.4.2** ([latest release](https://github.com/SmelterLabs/hermes-account-switcher/releases/latest))
+- Version: **1.4.3** ([latest release](https://github.com/SmelterLabs/hermes-account-switcher/releases/latest))
 - Platform: **Windows only**
 - Scope: local Hermes profiles on this machine. Remote machines, the standalone Codex app, and
   Claude Code's own sessions are not touched.
 
 ## Status
 
-Version **1.4.2** switches Codex and Claude at once even while Hermes is working: nothing is held and
+Version **1.4.3** makes a switch take a couple of seconds: Hermes stays loaded in the background
+while Hermes Desktop is open, so the click no longer waits for it to start (about 2 s measured, down
+from about 16 s). It also shows a Claude account whose sign-in has run out as not logged in, warns three
+days before that happens, and says plainly why a login could not be checked. 1.4.2 switches Codex and Claude at once even while Hermes is working: nothing is held and
 nothing waits, and if a session that was running puts the old Codex order back, the switch puts your
 choice back first and the window warns if it is ever on the old account again. 1.4.0 switches accounts without restarting anything on Hermes
 0.22 and later: every chat uses the new accounts from its next message (a Claude switch needs the
