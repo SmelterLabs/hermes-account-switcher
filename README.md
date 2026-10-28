@@ -1,10 +1,22 @@
 # Hermes Account Switcher — Codex & Claude switching for Hermes Desktop (Windows)
 
 A Desktop plugin for Hermes on Windows that switches which **Codex** login and which **Claude**
-subscription account every local Hermes profile on this PC uses. One idle-only restart applies
-either or both. On Hermes 0.22 and later that restart is the gateway alone: Hermes Desktop stays
-open and reconnects. The status-bar dialog reports success only from a post-restart verification
-receipt: an accepted request is never treated as a completed switch.
+subscription account every local Hermes profile on this PC uses.
+
+**Switching takes about 2 seconds and nothing restarts** (1.9 s measured on the owner's PC). Hermes
+Desktop, the gateway and your chats keep running; every chat uses the new accounts from its next
+message. The window reports a switch as done only after reading every profile's saved choice back.
+
+What that needs, and what to expect:
+
+- **Hermes 0.22 or later.** Older Hermes restarts the gateway for each switch, only while nothing is
+  running.
+- **Claude provider 0.3.1 or later** for a Claude switch without a restart. With an older provider a
+  Claude switch restarts the gateway.
+- **A reply that is already being written finishes on the old account.** The next message uses the
+  new one.
+- **Claude sign-ins need renewing about every four weeks** (Anthropic's limit). The window warns
+  three days ahead and gives the command to sign in again.
 
 - Plugin ID: `account-switcher`
 - Version: **1.4.3** ([latest release](https://github.com/SmelterLabs/hermes-account-switcher/releases/latest))
@@ -14,9 +26,9 @@ receipt: an accepted request is never treated as a completed switch.
 
 ## Status
 
-Version **1.4.3** makes a switch take a couple of seconds: Hermes stays loaded in the background
-while Hermes Desktop is open, so the click no longer waits for it to start (about 2 s measured, down
-from about 16 s). It also shows a Claude account whose sign-in has run out as not logged in, warns three
+Version **1.4.3** makes a switch take about 2 seconds with nothing restarted: Hermes stays loaded in
+the background while Hermes Desktop is open, so the click no longer waits for it to start (1.9 s
+measured, down from about 16 s). It also shows a Claude account whose sign-in has run out as not logged in, warns three
 days before that happens, and says plainly why a login could not be checked. 1.4.2 switches Codex and Claude at once even while Hermes is working: nothing is held and
 nothing waits, and if a session that was running puts the old Codex order back, the switch puts your
 choice back first and the window warns if it is ever on the old account again. 1.4.0 switches accounts without restarting anything on Hermes
