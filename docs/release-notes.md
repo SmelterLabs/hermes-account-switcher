@@ -1,5 +1,21 @@
 # Release notes — Hermes Account Switcher
 
+## 1.4.4
+
+The switch window no longer closes by itself right after it opens.
+
+- **The window survives a rebuilt status-bar button.** Hermes Desktop gives a plugin's status-bar item
+  a new component whenever the list of items on that side of the status bar changes, and the new one
+  starts with fresh state. The window's "open" flag lived in that state, so the first click could open
+  the window and lose it at once; the second click worked. The flag is now kept outside the component,
+  once per registration, and the rebuilt button comes back with its window open. Cancel and the close
+  button still close it.
+- Nothing else changed: the backend, the switch and the settings are those of 1.4.3.
+- Found on the owner's PC and traced in Hermes Desktop's source (`useStatusbarContributions`). An
+  interface test rebuilds the item with the window open; it fails on 1.4.3. What changes the status
+  bar's item list at the first click was not identified, and the fix was not seen on a real machine
+  before release.
+
 ## 1.4.3
 
 Switching takes about two seconds (measured on the owner's PC: 1.9 s, down from about 16 s).

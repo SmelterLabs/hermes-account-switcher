@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { createElement } from 'react'
 
 import plugin from './plugin.js'
 import {
@@ -86,6 +87,23 @@ describe('account-switcher desktop plugin', () => {
     await screen.findByRole('dialog')
     expect((await screen.findAllByText(/runs on another machine/)).length).toBeGreaterThan(0)
     expect(rest.calls).toHaveLength(0)
+  })
+
+  it('keeps the dialog open when Hermes Desktop rebuilds the status-bar item, and closed after Cancel', async () => {
+    // Desktop gives a contributed item a new component type whenever the status bar's item list changes,
+    // which unmounts and remounts it; a key change does the same here.
+    const { statusContribution } = registerWith(makeRest())
+    const item = key => createElement('div', { key }, statusContribution.render())
+    const view = render(item('first'))
+    fireEvent.click(await screen.findByRole('button', { name: /Codex:/ }))
+    await screen.findByRole('dialog')
+    view.rerender(item('second'))
+    await screen.findByRole('dialog')
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    view.rerender(item('third'))
+    await screen.findByRole('button', { name: /Codex:/ })
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('treats the local connection, by id or by none at all, as this PC', async () => {

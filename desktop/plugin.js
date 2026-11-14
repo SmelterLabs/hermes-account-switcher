@@ -657,14 +657,21 @@ function SetupDialog({ open, onOpenChange, found, foundError, names, onName, onS
 // Before the first successful poll, and after a failed one, both selections are unknown — never "Unset".
 const EMPTY_STATUS = normalizeStatus({ codex: { selected: null, accounts: [] }, claude: { selected: null, state: null, accounts: [] }, last_operation: null, in_progress: false, blockers: [], scope: DEFAULT_SCOPE })
 
-function AccountStatusButton({ rest }) {
+// kept: one holder per registration, outside React. Hermes Desktop rebuilds a status-bar item's component
+// whenever the list of items on that side changes, and a rebuilt component starts with fresh state: an open
+// dialog vanished. The holder lets the rebuilt button come back with its dialog still open.
+function AccountStatusButton({ rest, kept }) {
   const [status, setStatus] = useState(EMPTY_STATUS)
   const [statusError, setStatusError] = useState(null)
   const [remote, setRemote] = useState(false)
   const [preflight, setPreflight] = useState(null)
   const [checkState, setCheckState] = useState('idle')
   const [checkError, setCheckError] = useState(null)
-  const [open, setOpen] = useState(false)
+  const [open, setOpenState] = useState(() => kept?.open === true)
+  const setOpen = value => {
+    if (kept) kept.open = value === true
+    setOpenState(value)
+  }
   const [codexTarget, setCodexTarget] = useState('')
   const [claudeTarget, setClaudeTarget] = useState(CLAUDE_UNSET)
   const [localPending, setLocalPending] = useState(false)
@@ -938,11 +945,12 @@ export default {
   name: 'Account switch (Codex + Claude)',
   description: 'Switch the PC-wide Codex and Claude accounts used by Hermes Desktop profiles.',
   register(ctx) {
+    const kept = { open: false }
     ctx.register({
       id: 'status',
       area: 'statusBar.right',
       order: 120,
-      render: () => jsx(AccountStatusButton, { rest: localOnly(ctx.rest) })
+      render: () => jsx(AccountStatusButton, { rest: localOnly(ctx.rest), kept })
     })
   }
 }
