@@ -79,7 +79,7 @@ afterEach(() => {
 
 describe('account-switcher desktop plugin', () => {
   it('sends nothing while the active chat runs on a remote connection, and says why', async () => {
-    globalThis.__activeConnectionId = 'forge'
+    globalThis.__activeConnectionId = 'remote-pc'
     const rest = makeRest()
     const { statusContribution } = registerWith(rest)
     render(statusContribution.render())
@@ -117,7 +117,7 @@ describe('account-switcher desktop plugin', () => {
   })
 
   it('reaches this PC again once a local chat is active', async () => {
-    globalThis.__activeConnectionId = 'forge'
+    globalThis.__activeConnectionId = 'remote-pc'
     const rest = makeRest()
     const { statusContribution } = registerWith(rest)
     render(statusContribution.render())

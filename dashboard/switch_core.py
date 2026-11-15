@@ -164,7 +164,7 @@ def normalize_request(body):
 
 
 def _named(provider, label):
-    # A label like "Claude - VBP" already names its provider; "Claude Claude - VBP" reads as a typo.
+    # A label like "Claude - Work" already names its provider; "Claude Claude - Work" reads as a typo.
     return label if re.match(rf'{provider}\b', label, re.IGNORECASE) else f'{provider} {label}'
 
 
