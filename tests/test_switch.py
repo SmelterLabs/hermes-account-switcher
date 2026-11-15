@@ -157,7 +157,7 @@ def test_request_normalizes_either_or_both_providers():
 
 def test_a_label_that_already_names_its_provider_is_not_prefixed_twice():
     import switch_core
-    assert switch_core._named('Claude', 'Claude - VBP') == 'Claude - VBP'
+    assert switch_core._named('Claude', 'Claude - Work') == 'Claude - Work'
     assert switch_core._named('Claude', 'claude work') == 'claude work'
     assert switch_core._named('Codex', 'Codex') == 'Codex'
     # Only the whole word counts.
