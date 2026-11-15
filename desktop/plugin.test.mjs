@@ -304,7 +304,7 @@ describe('account-switcher desktop plugin', () => {
       expect(screen.queryByRole('alert')).toBeNull()
       expect(screen.getByRole('button', { name: 'Pending…' }).disabled).toBe(true)
       expect(screen.queryByText(/has not come back after 3 minutes/)).toBeNull()
-      // Two and a half minutes in (Casey's Codex switch took 80 seconds): still calm.
+      // Two and a half minutes in (a real Codex switch took 80 seconds): still calm.
       const start = originalNow()
       Date.now = () => start + 150_000
       const before = count(rest, '/status')
@@ -332,7 +332,7 @@ describe('account-switcher desktop plugin', () => {
     }
   })
 
-  // What Casey saw on 2026-10-21: the backend's own "Checking active work before restarting…" was the last
+  // Seen on a real PC on 2026-10-21: the backend's own "Checking active work before restarting…" was the last
   // answer, then Hermes Desktop's runtime_exited error replaced it while the gateway was down.
   it('stays calm when the status already said a switch was pending before the gateway went down', async () => {
     const runtimeExited = new Error('Gateway inaccessible (runtime_exited). the gateway exited with status 15 before it could serve:. Use hermes gateway status for recovery.')
