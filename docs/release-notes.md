@@ -11,10 +11,11 @@ The switch window no longer closes by itself right after it opens.
   once per registration, and the rebuilt button comes back with its window open. Cancel and the close
   button still close it.
 - Nothing else changed: the backend, the switch and the settings are those of 1.4.3.
-- Found on the owner's PC and traced in Hermes Desktop's source (`useStatusbarContributions`). An
+- Found on a real PC and traced in Hermes Desktop's source (`useStatusbarContributions`). An
   interface test rebuilds the item with the window open; it fails on 1.4.3. What changes the status
-  bar's item list at the first click was not identified, and the fix was not seen on a real machine
-  before release.
+  bar's item list at the first click was not identified, so not every PC shows the fault.
+- Confirmed after release: 1.4.4 was installed on a PC where the first click failed every time, and
+  the window now stays open on the first click.
 
 ## 1.4.3
 
