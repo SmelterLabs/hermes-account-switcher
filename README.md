@@ -19,15 +19,16 @@ What that needs, and what to expect:
   three days ahead and gives the command to sign in again.
 
 - Plugin ID: `account-switcher`
-- Version: **1.4.4** ([latest release](https://github.com/SmelterLabs/hermes-account-switcher/releases/latest))
+- Version: **1.4.5** ([latest release](https://github.com/SmelterLabs/hermes-account-switcher/releases/latest))
 - Platform: **Windows only**
 - Scope: local Hermes profiles on this machine. Remote machines, the standalone Codex app, and
   Claude Code's own sessions are not touched.
 
 ## Status
 
-Version **1.4.4** keeps the switch window open when Hermes Desktop rebuilds the status-bar button,
-which could close the window right after the first click. 1.4.3 makes a switch take about 2 seconds with nothing restarted: Hermes stays loaded in
+Version **1.4.5** finds and removes the real reason the switch window closed by itself after the first
+click: opening the window read a file that Hermes Desktop watches, and Desktop took the read for an edit
+and reloaded the plugin. 1.4.4 kept the window open when Hermes Desktop rebuilds the status-bar button. 1.4.3 makes a switch take about 2 seconds with nothing restarted: Hermes stays loaded in
 the background while Hermes Desktop is open, so the click no longer waits for it to start (1.9 s
 measured, down from about 16 s). It also shows a Claude account whose sign-in has run out as not logged in, warns three
 days before that happens, and says plainly why a login could not be checked. 1.4.2 switches Codex and Claude at once even while Hermes is working: nothing is held and

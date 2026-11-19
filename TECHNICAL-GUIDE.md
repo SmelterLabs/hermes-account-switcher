@@ -6,7 +6,7 @@ not been proven is in [docs/acceptance.md](docs/acceptance.md).
 
 ## What this is
 
-A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.4.4)
+A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.4.5)
 that switches which Codex login and which Claude subscription account every local Hermes profile
 on the PC uses, through one idle-only, verified restart. It began as a private tool tailored to
 one machine and is packaged here for anyone. **The working behavior was preserved, not
@@ -289,7 +289,18 @@ checked against the login, never inferred from a label**.
   the item's component remounts with fresh state; the switch dialog opened and vanished on the first
   click (owner's PC; what changes the list there was not identified). `register()` therefore keeps the
   dialog's open flag in a per-registration holder (`kept`) that the rebuilt button reads on mount (1.4.4).
-- **The active-work blocker has no job names**, on purpose: the lookup that provided them was
+- **Hermes Desktop reloads the whole plugin when its copy of `plugin.js` is merely read** (the real
+  cause of the first-click close, found 2026-11-19 on the owner's PC). Desktop watches
+  `desktop-plugins/account-switcher/plugin.js` with `fs.watch` on its folder to hot-reload edits. On
+  Windows `fs.watch` also reports a last-access update, which NTFS makes on a read at most once an hour;
+  the reload runs `register()` again and the open dialog vanished. Opening the dialog runs `/preflight`,
+  whose stale-Desktop check read that copy, so the first click of the hour closed the dialog and the
+  second did not. Measured on the owner's PC: a plain read gives a `change` event, `os.stat` and the read
+  below do not. Since 1.4.5 the check compares size and modified time first (Desktop keeps the installed
+  file's time on its copy, so an up-to-date copy is not opened) and otherwise reads through
+  `_read_leaving_access_time` (SetFileTime 0xFFFFFFFF on the handle). The dialog's `kept` holder also
+  lives on `globalThis`, so anything else that touches the file (a search, a virus scan) can no longer
+  close the dialog.- **The active-work blocker has no job names**, on purpose: the lookup that provided them was
   outside the plugin kit.
 - **After any Hermes update:** acceptance is the real dialog showing selectors, and a real switch.
 - **The interface tests run against a stand-in.** They cannot see how the real app draws a
@@ -310,7 +321,7 @@ the interface suite on Linux, on every push to `main` and every pull request. Te
 Windows APIs or drive-letter paths carry `@pytest.mark.windows` and are skipped on other systems,
 so only the Windows job proves them.
 
-Current counts: 424 backend, 51 interface. The 1.2.3 runtime support was proven on the owner's
+Current counts: 428 backend, 52 interface. The 1.2.3 runtime support was proven on the owner's
 PC with one real switch: `docs/receipts/2026-10-17-unified-runtime-owner-pc.json`. Live evidence and what is still not run:
 [docs/acceptance.md](docs/acceptance.md).
 

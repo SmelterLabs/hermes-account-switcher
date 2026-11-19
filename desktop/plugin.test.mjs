@@ -75,6 +75,7 @@ afterEach(() => {
   window.localStorage.clear()
   delete window.hermesDesktop
   delete globalThis.__activeConnectionId
+  delete globalThis[Symbol.for('hermes.account-switcher.kept')]
 })
 
 describe('account-switcher desktop plugin', () => {
@@ -102,6 +103,25 @@ describe('account-switcher desktop plugin', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     view.rerender(item('third'))
+    await screen.findByRole('button', { name: /Codex:/ })
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('keeps the dialog open when Hermes Desktop reloads the whole plugin, and closed after Cancel', async () => {
+    // Seen on a real PC: opening the dialog read Desktop's copy of plugin.js, Windows recorded the access,
+    // Desktop's file watch took it for an edit and ran register() again. The new registration's button must
+    // come back with the dialog open.
+    const first = registerWith(makeRest()).statusContribution
+    const view = render(createElement('div', { key: 'first' }, first.render()))
+    fireEvent.click(await screen.findByRole('button', { name: /Codex:/ }))
+    await screen.findByRole('dialog')
+    const reloaded = registerWith(makeRest()).statusContribution
+    view.rerender(createElement('div', { key: 'reloaded' }, reloaded.render()))
+    await screen.findByRole('dialog')
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    const again = registerWith(makeRest()).statusContribution
+    view.rerender(createElement('div', { key: 'again' }, again.render()))
     await screen.findByRole('button', { name: /Codex:/ })
     expect(screen.queryByRole('dialog')).toBeNull()
   })

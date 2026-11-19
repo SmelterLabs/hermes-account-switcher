@@ -1,5 +1,26 @@
 # Release notes — Hermes Account Switcher
 
+## 1.4.5
+
+The switch window stays open on the first click. This time the cause is found and removed.
+
+- **The cause.** Hermes Desktop watches its own copy of the window's file (`plugin.js`) so that an edit
+  reloads the plugin at once. On Windows that watch also fires when the file is merely read, because
+  reading it updates the file's last-access time, which Windows does at most once an hour. Opening the
+  window ran a check that read Desktop's copy (to tell whether Desktop was still showing an older
+  window), Desktop took the read for an edit, reloaded the plugin, and the window it was showing was
+  gone. Within the hour the read changed nothing, so the second click stayed open. Proven on the
+  owner's PC on 2026-11-19: a plain read of the file sets off Desktop's watch; the reads 1.4.5 uses do
+  not.
+- **The fix.** The check now compares the two files' size and modified time first, so an up-to-date
+  copy is not opened at all, and when it must read the copy it reads it without touching the
+  last-access time. It still says when Hermes Desktop must be restarted after an update.
+- **And a safety net.** The window remembers it is open even across a reload of the whole plugin, so
+  anything else that reads the file (a file search, a virus scan) cannot close it either. 1.4.4 kept it
+  open only when Desktop rebuilt the button, which is not what happened here.
+- Tests: a reload of the plugin with the window open (fails on 1.4.4), the check never reading Desktop's
+  copy plainly (fails on 1.4.4), and, on Windows, the last-access time left alone.
+
 ## 1.4.4
 
 The switch window no longer closes by itself right after it opens.

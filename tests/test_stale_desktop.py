@@ -8,6 +8,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parents[1] / 'dashboard'))
 import windows_ops as ops
 
@@ -78,3 +80,55 @@ def test_missing_or_unreadable_desktop_records_never_block(tmp_path):
 
 def test_the_default_source_is_this_installs_own_dialog():
     assert ops.PACKAGE_DIR == Path(ops.__file__).resolve().parent.parent / 'desktop'
+
+
+# Seen on the owner's PC on 2026-11-19: the switch window opened by the first click closed by itself and
+# the second click stayed open. Opening the window ran this check, whose plain read of Desktop's copy moved
+# that file's last-access time; Desktop's fs.watch reported it as a change and reloaded the plugin, which
+# dropped the open window. NTFS moves the time at most once an hour, so the second click was quiet.
+
+def _refuse_plain_reads_of(monkeypatch, path):
+    plain = Path.read_bytes
+
+    def read_bytes(self):
+        assert Path(self) != path, "Desktop's copy of the dialog was read plainly"
+        return plain(self)
+
+    monkeypatch.setattr(Path, 'read_bytes', read_bytes)
+
+
+def test_desktops_copy_is_never_read_plainly(tmp_path, monkeypatch):
+    root, package, mirror = layout(tmp_path, copy=b'// dialog 1.3.2, longer\n', recorded=COPIED_AT)
+    _refuse_plain_reads_of(monkeypatch, mirror / 'plugin.js')
+    seen = []
+    reader = lambda path: seen.append(path) or path.open('rb').read()
+    assert ops.stale_desktop_blockers(root, package, read=reader) == [ops.STALE_DESKTOP_TEXT]
+    assert seen == []   # the sizes differ: no need to open it at all
+    (mirror / 'plugin.js').write_bytes(OLD)
+    assert ops.stale_desktop_blockers(root, package, read=reader) == [ops.STALE_DESKTOP_TEXT]
+    (mirror / 'plugin.js').write_bytes(NEW)
+    assert ops.stale_desktop_blockers(root, package, read=reader) == []
+    # Same size, another time: compared, each time through the careful reader.
+    assert seen == [mirror / 'plugin.js'] * 2
+
+
+def test_a_copy_with_the_installed_size_and_time_is_not_opened(tmp_path):
+    # Desktop keeps the installed file's modified time on its copy, as on the owner's PC.
+    root, package, mirror = layout(tmp_path, copy=NEW, recorded=COPIED_AT)
+    os.utime(mirror / 'plugin.js', ns=(0, (package / 'plugin.js').stat().st_mtime_ns))
+    assert ops.stale_desktop_blockers(root, package, read=lambda path: pytest.fail('opened')) == []
+
+
+def test_a_copy_that_cannot_be_read_carefully_is_judged_by_its_time(tmp_path):
+    root, package, _ = layout(tmp_path, copy=b'// dialog 1.3.4\n', recorded=COPIED_AT)
+    assert ops.stale_desktop_blockers(root, package, read=lambda path: None) == [ops.STALE_DESKTOP_TEXT]
+
+
+@pytest.mark.windows
+def test_the_careful_read_leaves_the_last_access_time_alone(tmp_path):
+    path = tmp_path / 'plugin.js'
+    path.write_bytes(NEW * 5000)
+    old = path.stat().st_mtime - 3 * 3600
+    os.utime(path, (old, path.stat().st_mtime))
+    assert ops._read_leaving_access_time(path) == NEW * 5000
+    assert path.stat().st_atime == pytest.approx(old, abs=1)

@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'account-switcher'
+const KEPT = Symbol.for('hermes.account-switcher.kept')
 // 1.1.1: managed launcher support, explicit preflight errors, dated last-attempt notices.
 const STATUS_POLL_INTERVAL_MS = 10_000
 const DEFAULT_SCOPE = 'All Hermes profiles on this PC'
@@ -657,9 +658,11 @@ function SetupDialog({ open, onOpenChange, found, foundError, names, onName, onS
 // Before the first successful poll, and after a failed one, both selections are unknown — never "Unset".
 const EMPTY_STATUS = normalizeStatus({ codex: { selected: null, accounts: [] }, claude: { selected: null, state: null, accounts: [] }, last_operation: null, in_progress: false, blockers: [], scope: DEFAULT_SCOPE })
 
-// kept: one holder per registration, outside React. Hermes Desktop rebuilds a status-bar item's component
-// whenever the list of items on that side changes, and a rebuilt component starts with fresh state: an open
-// dialog vanished. The holder lets the rebuilt button come back with its dialog still open.
+// kept: one holder outside React that outlives the component and the plugin's own registration. Hermes
+// Desktop rebuilds a status-bar item's component whenever the list of items on that side changes, and it
+// reloads the whole plugin (a fresh register()) whenever its fs.watch on plugin.js fires, which on Windows a
+// mere read of that file can do. Either way the new button starts with fresh state, and an open dialog
+// vanished. The holder lets the new button come back with its dialog still open.
 function AccountStatusButton({ rest, kept }) {
   const [status, setStatus] = useState(EMPTY_STATUS)
   const [statusError, setStatusError] = useState(null)
@@ -945,7 +948,8 @@ export default {
   name: 'Account switch (Codex + Claude)',
   description: 'Switch the PC-wide Codex and Claude accounts used by Hermes Desktop profiles.',
   register(ctx) {
-    const kept = { open: false }
+    // On globalThis, not in this module: a reload evaluates the file again, and module state starts over.
+    const kept = (globalThis[KEPT] ??= { open: false })
     ctx.register({
       id: 'status',
       area: 'statusBar.right',
