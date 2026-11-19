@@ -266,14 +266,63 @@ STALE_DESKTOP_TEXT = ('Hermes Desktop is still showing the previous version of t
 PACKAGE_DIR = Path(__file__).resolve().parent.parent / 'desktop'
 
 
-def stale_desktop_blockers(root=None, source=None):
+def _read_leaving_access_time(path):
+    """The file's bytes, read without moving its last-access time.
+
+    Hermes Desktop watches its copy of the dialog with fs.watch, and on Windows a plain read that moves the
+    last-access time (NTFS does so at most once an hour) is reported as a change: Desktop reloads the plugin
+    and the switch window it was showing vanishes. Seen on the owner's PC on 2026-11-19: the window opened by
+    the first click closed by itself, the second click, within the hour, stayed open. On Windows the handle is
+    told to leave the access time alone (SetFileTime with 0xFFFFFFFF); None when that cannot be done, so the
+    caller decides without reading. Elsewhere nothing watches this file, and a plain read is used."""
+    if os.name != 'nt':
+        return Path(path).read_bytes()
+    import ctypes
+    from ctypes import wintypes
+
+    class FILETIME(ctypes.Structure):
+        _fields_ = [('low', wintypes.DWORD), ('high', wintypes.DWORD)]
+
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                   wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    kernel.SetFileTime.argtypes = [wintypes.HANDLE, ctypes.c_void_p, ctypes.POINTER(FILETIME), ctypes.c_void_p]
+    kernel.ReadFile.argtypes = [wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+                                wintypes.LPVOID]
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    generic_read, write_attributes, share_all, open_existing, normal = 0x80000000, 0x100, 7, 3, 0x80
+    handle = kernel.CreateFileW(str(path), generic_read | write_attributes, share_all, None, open_existing, normal,
+                                None)
+    if handle in (None, wintypes.HANDLE(-1).value):
+        return None
+    try:
+        if not kernel.SetFileTime(handle, None, ctypes.byref(FILETIME(0xFFFFFFFF, 0xFFFFFFFF)), None):
+            return None
+        chunks, buffer, count = [], ctypes.create_string_buffer(1 << 16), wintypes.DWORD()
+        while True:
+            if not kernel.ReadFile(handle, buffer, len(buffer), ctypes.byref(count), None):
+                return None
+            if not count.value:
+                return b''.join(chunks)
+            chunks.append(buffer.raw[:count.value])
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def stale_desktop_blockers(root=None, source=None, read=None):
     """A blocker when Desktop's own copy of this plugin's dialog is older than the installed one.
 
     Says so only on proof: Desktop's package record names this install as its source, the copy differs from
     the installed file, and the record's time is older than the installed file. Anything missing or
-    unreadable is not proof, so a Desktop that stores its copy differently never blocks a switch."""
+    unreadable is not proof, so a Desktop that stores its copy differently never blocks a switch.
+
+    This runs each time the switch window opens, so Desktop's copy is never read plainly: see
+    _read_leaving_access_time. Desktop keeps the installed file's modified time on its copy, so a copy with
+    the same size and time is the same file and is not opened at all."""
     root = Path(root or ROOT)
     source = Path(source or PACKAGE_DIR)
+    read = read or _read_leaving_access_time
     mirror = root / 'desktop-plugins' / 'account-switcher'
     try:
         record = json.loads((mirror / '.hermes-package.json').read_text(encoding='utf-8-sig'))
@@ -281,13 +330,20 @@ def stale_desktop_blockers(root=None, source=None):
             return []
         recorded = float(record['sourceMtimeMs'])
         installed = source / 'plugin.js'
-        if (mirror / 'plugin.js').read_bytes() == installed.read_bytes():
+        copy, wanted = (mirror / 'plugin.js').stat(), installed.stat()
+        if (copy.st_size, copy.st_mtime_ns) == (wanted.st_size, wanted.st_mtime_ns):
             return []
-        newest = min(source.stat().st_mtime, installed.stat().st_mtime) * 1000
+        newest = min(source.stat().st_mtime, wanted.st_mtime) * 1000
+        # Two seconds of slack for file systems that round modified times.
+        if recorded + 2000 >= newest:
+            return []
+        # Same bytes under a newer time (a reinstall of the same dialog) is not stale. When the copy cannot be
+        # read without touching it, the differing size or time above is the answer.
+        if copy.st_size == wanted.st_size and read(mirror / 'plugin.js') == installed.read_bytes():
+            return []
     except (OSError, ValueError, KeyError, TypeError):
         return []
-    # Two seconds of slack for file systems that round modified times.
-    return [STALE_DESKTOP_TEXT] if recorded + 2000 < newest else []
+    return [STALE_DESKTOP_TEXT]
 
 
 def plugin_profile_blockers():
