@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 import psutil
 if __package__:  # imported by the dashboard API inside Hermes's web server
@@ -630,10 +631,61 @@ def sign_in_expired(cred):
     return isinstance(limit, (int, float)) and not isinstance(limit, bool) and limit > 0 and limit / 1000 <= time.time()
 
 
+# The year-long sign-in (`claude setup-token`) sits beside the folder's own login. The Claude provider reads
+# this file on every spawn and hands it to Claude Code as CLAUDE_CODE_OAUTH_TOKEN, which wins over the
+# folder's 28-day login. The second file is this plugin's record of whose token it is (no secret in it).
+YEAR_TOKEN_FILE = 'oauth-token.txt'
+YEAR_TOKEN_RECORD = 'oauth-token-account.json'
+YEAR_TOKEN_DAYS = 365
+
+
+def year_token(key):
+    """The folder's year-long sign-in, or None: read exactly as the provider reads it."""
+    try:
+        token = (claude_dir(key) / YEAR_TOKEN_FILE).read_text(encoding='utf-8').strip()
+    except OSError:
+        return None
+    return token if token.startswith('sk-ant-oat') else None
+
+
+def year_token_record(key):
+    """``{'email', 'organization', 'created'}`` written when the token was checked, or {}."""
+    try:
+        data = json.loads((claude_dir(key) / YEAR_TOKEN_RECORD).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def year_token_ends(key):
+    """When the year-long sign-in runs out (seconds since the epoch): a year after it was made. A token
+    this plugin did not record is dated by its file."""
+    created = year_token_record(key).get('created')
+    if isinstance(created, bool) or not isinstance(created, (int, float)) or created <= 0:
+        try:
+            created = (claude_dir(key) / YEAR_TOKEN_FILE).stat().st_mtime
+        except OSError:
+            return None
+    return created + YEAR_TOKEN_DAYS * 86400
+
+
+def record_year_token(key, organization, created=None):
+    """Note whose year-long sign-in the folder holds, after it was checked against the account's own login."""
+    data = {'email': CLAUDE[key][1], 'organization': organization,
+            'created': time.time() if created is None else created}
+    (claude_dir(key) / YEAR_TOKEN_RECORD).write_text(json.dumps(data, indent=2), encoding='utf-8')
+
+
 def claude_accounts():
     """Cheap, token-free summary for status polling."""
     rows = []
     for key, (label, email) in CLAUDE.items():
+        if year_token(key):
+            ends = year_token_ends(key)
+            rows.append({'key': key, 'label': label, 'email': email,
+                         'logged_in': ends is not None and ends > time.time(), 'unreadable': False,
+                         'cached_email': _cached_label(key) or None, 'sign_in_ends': ends, 'year_token': True})
+            continue
         try:
             cred, unreadable = _credentials(key, attempts=2, pause=0.1), False
         except CredentialsUnreadable:
@@ -643,12 +695,13 @@ def claude_accounts():
                      # True: a login file exists but was locked or mid-write; not the same as signed out.
                      'unreadable': unreadable,
                      'cached_email': _cached_label(key) or None,
-                     'sign_in_ends': sign_in_ends(cred)})
+                     'sign_in_ends': sign_in_ends(cred), 'year_token': False})
     return rows
 
 
-# How long before a Claude sign-in runs out the window starts saying so.
+# How long before a Claude sign-in runs out the window starts saying so: the 28-day one, the year-long one.
 SIGN_IN_NOTICE_DAYS = 3
+YEAR_TOKEN_NOTICE_DAYS = 14
 
 
 def sign_in_ends(cred):
@@ -665,9 +718,10 @@ def sign_in_warnings(rows, now=None):
     lines = []
     for row in rows:
         ends = row.get('sign_in_ends')
-        if ends is None or ends - now > SIGN_IN_NOTICE_DAYS * 86400:
+        notice = YEAR_TOKEN_NOTICE_DAYS if row.get('year_token') else SIGN_IN_NOTICE_DAYS
+        if ends is None or ends - now > notice * 86400:
             continue
-        name = f"Claude {row['label']}"
+        name = f"Claude {row['label']}" + (' year-long' if row.get('year_token') else '')
         if ends <= now:
             lines.append(f'The {name} sign-in has run out; sign it in again with "setup.cmd claude {row["key"]}".')
         else:
@@ -683,6 +737,24 @@ def _oauth_profile(token):
     with urllib.request.urlopen(req, timeout=20) as r:
         data = json.load(r)
     return ((data.get('account') or {}).get('email') or '').lower()
+
+
+def _token_organization(token):
+    """The Anthropic organization a token belongs to. A year-long token may only make model requests, so
+    the profile call that names its owner refuses it (HTTP 403). Every API answer to an accepted token
+    carries the organization id, though, and an empty token count is refused (HTTP 400) before any model
+    runs: nothing is billed and no model name can go stale. A refused token raises HTTPError 401."""
+    req = urllib.request.Request('https://api.anthropic.com/v1/messages/count_tokens', data=b'{}', method='POST',
+                                 headers={'Authorization': 'Bearer ' + token, 'anthropic-beta': 'oauth-2025-04-20',
+                                          'anthropic-version': '2023-06-01', 'content-type': 'application/json'})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            headers = r.headers
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise
+        headers = exc.headers
+    return str((headers or {}).get('anthropic-organization-id') or '')
 
 
 def claude_cli(path=None):
@@ -722,9 +794,65 @@ def _handshake(key, timeout=60):
 def claude_identity(key):
     """Prove which account owns the login in the Hermes folder for ``key``.
 
-    The token owner must be verified with Anthropic. An expired token gets one
-    CLI refresh attempt. A cached folder label is never evidence of ownership.
+    The login Hermes will use is checked: the year-long sign-in when the folder holds one (the provider
+    hands it to Claude Code, where it wins), else the folder's own login.
     """
+    token = year_token(key)
+    return _year_token_identity(key, token) if token else _login_identity(key)
+
+
+class YearTokenDead(SwitchError):
+    """The year-long sign-in ran out or Anthropic refuses it: only a new one helps."""
+
+
+class YearTokenUnchecked(SwitchError):
+    """A year-long sign-in this plugin has not recorded, and the folder's own login cannot vouch for it."""
+
+
+def _year_token_identity(key, token):
+    """The year-long token cannot name its owner, so its organization is compared with the one recorded
+    when it was checked against the account's own login, or, before that, with the login's own."""
+    label, expected = CLAUDE[key]
+    again = f'Sign it in again with "setup.cmd claude {key}".'
+    ends = year_token_ends(key)
+    if ends is not None and ends <= time.time():
+        when = time.strftime('%b %d, %Y', time.localtime(ends))
+        raise YearTokenDead(f'The year-long {label} Claude sign-in ran out on {when}. {again}')
+    organization, reason = '', None
+    for attempt in range(2):  # One network blip must not read as an unverifiable login.
+        try:
+            organization = _token_organization(token)
+            break
+        except Exception as exc:
+            code = getattr(exc, 'code', None)
+            if code in (401, 403):
+                raise YearTokenDead(f'Anthropic no longer accepts the year-long {label} Claude sign-in. {again}') from None
+            reason = (f'Anthropic answered HTTP {code}' if isinstance(code, int)
+                      else f'Anthropic could not be reached ({type(exc).__name__})')
+            if attempt == 0:
+                time.sleep(2)
+    if not organization:
+        raise SwitchError(f'The year-long {label} Claude sign-in could not be verified with Anthropic '
+                          f'({reason or "Anthropic named no account"}); recheck, and if this stays: {again}')
+    record = year_token_record(key)
+    if record.get('email') == expected and record.get('organization'):
+        known = record['organization']
+    else:
+        # Not checked by this plugin yet: the account's own login must still prove the account first.
+        try:
+            _login_identity(key)
+            known = _token_organization(_credentials(key)['accessToken'])
+        except Exception:
+            raise YearTokenUnchecked(f'The {label} Claude folder holds a year-long sign-in that has not been checked '
+                              f'yet. Check it with "setup.cmd claude {key}".') from None
+    if organization != known:
+        raise WrongAccount(f'The year-long {label} Claude sign-in belongs to another account than {expected}. {again}')
+    return {'email': expected, 'method': 'year token'}
+
+
+def _login_identity(key):
+    """The folder's own login: the token owner must be verified with Anthropic. An expired token gets one
+    CLI refresh attempt. A cached folder label is never evidence of ownership."""
     label, expected = CLAUDE[key]
     busy = SwitchError(f'The {label} Claude login file could not be read just now (Claude Code may be refreshing it); '
                        'wait a moment and recheck.')

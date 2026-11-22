@@ -113,6 +113,13 @@ setup.cmd claude personal me@example.com
 2. Paste the link into a **private** browser window, sign in as that account, and approve.
 3. Paste the code the page shows back into the terminal.
 4. The tool asks Anthropic who signed in. If it was the wrong account, the login is thrown away.
+5. Next it makes the account's **year-long sign-in**: a second link lands on your clipboard. Open it in
+   the private window the same way and approve (paste the code if the page shows one, then press Enter).
+   It is kept only if Anthropic says it belongs to the same account. After this, the account does not
+   need signing in again for a year; the switch window reminds you two weeks before.
+
+Already signed in? Running `setup.cmd claude <key>` again skips straight to step 5, and does nothing at all
+for an account that already has a year-long sign-in.
 
 ## Step 4 — Switch accounts
 
@@ -208,7 +215,8 @@ into `<Hermes home>\plugin-data\account-switcher\`, then run
 | After an update the switch window looks the same as before, or a switch is refused with "Hermes Desktop is still showing the previous version of this window" | Hermes Desktop runs its own copy of the switch window, taken when Desktop starts. A switch restarts only the gateway, not Desktop, so the copy stays old. Close Hermes Desktop completely and open it again. |
 | During a switch: "The Hermes gateway is restarting as part of the switch" | Normal. The gateway is stopped on purpose while the accounts change; Hermes Desktop reconnects by itself, usually within a minute. Only if it has not come back after 3 minutes does the window turn red and say what to check. |
 | "The Hermes gateway on this PC runs as the Windows service …" | The settings were written while that gateway was stopped, so setup could not see it. Run the command the message gives (`setup.cmd service <name>`), then restart Hermes Desktop. |
-| "not logged in" next to a Claude account | That account has not been signed in. Run `setup.cmd claude <its key>`. |
+| "not logged in" next to a Claude account | That account has not been signed in, or its sign-in ran out. Run `setup.cmd claude <its key>`. |
+| "… year-long sign-in has not been checked yet" | The account's folder holds a year-long sign-in made outside this tool. Run `setup.cmd claude <its key>` once; it checks it, usually without a browser. |
 | "The … Claude folder is logged in as …, not …" | The sign-in was made as a different account, usually because the browser was already signed in as someone else. Run `setup.cmd claude <its key>` again and use a private browser window. |
 | "The Claude subscription provider plugin is not installed" | Run `hermes plugins install claude-subscription-directsdk`. |
 | "… is not enabled in this profile" | The message names the profile and the command. Install the plugin into that profile's folder first; Hermes only enables a plugin it finds there. |
