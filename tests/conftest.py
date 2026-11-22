@@ -25,6 +25,13 @@ def fixture_settings(tmp_path, monkeypatch):
     monkeypatch.setenv('HERMES_SWITCH_SETTINGS', str(path))
 
 
+@pytest.fixture(autouse=True)
+def no_real_gateway_environment(monkeypatch):
+    # Tests name gateways by made-up PIDs; never read whatever real process has that number.
+    import windows_ops as ops
+    monkeypatch.setattr(ops, 'gateway_environment', lambda: {})
+
+
 def pytest_configure(config):
     config.addinivalue_line('markers', 'windows: needs Windows APIs or Windows path rules; skipped elsewhere')
 

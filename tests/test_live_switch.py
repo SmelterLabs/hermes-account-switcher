@@ -278,6 +278,77 @@ def test_dialog_preflight_says_whether_anything_restarts(home, monkeypatch):
     assert ops.preflight(lambda: {'blockers': []})['restarts'] is True
 
 
+# ---------------------------------------------------------------- a gateway that cannot answer on Claude
+
+POISONED = {'Anthropic_Base_Url': 'https://api.anthropic.com', 'CLAUDE_CODE_USE_BEDROCK': '0'}
+
+
+def test_what_the_claude_provider_refuses_is_read_from_an_environment():
+    assert ops.claude_refusals(POISONED) == ['ANTHROPIC_BASE_URL']
+    assert ops.claude_refusals({'ANTHROPIC_BASE_URL': '', 'CLAUDE_CODE_USE_VERTEX': 'false', 'ANTHROPIC_API_KEY': 'k'}) == []
+    assert ops.claude_refusals({'CLAUDE_CODE_USE_VERTEX': '1'}) == ['CLAUDE_CODE_USE_VERTEX']
+
+
+def test_a_gateway_that_cannot_be_read_is_not_called_broken(monkeypatch):
+    def denied():
+        raise ops.psutil.AccessDenied(50)
+    monkeypatch.setattr(ops, 'gateway_environment', denied)
+    assert ops.claude_refused_warnings() == []
+
+
+def test_the_window_says_when_the_gateway_cannot_use_claude_and_only_a_claude_change_is_stopped(home, monkeypatch):
+    # Seen on a real PC: the switch reported success while every Claude turn went to the fallback model.
+    root, _ = home
+    provider(root, '0.3.3')
+    monkeypatch.setattr(ops, 'gateway_hosts_desktop', lambda: True)
+    monkeypatch.setattr(ops, 'selection_summary', lambda: {'codex': {'selected': 'personal'},
+                                                           'claude': {'selected': None, 'state': 'unset', 'warnings': ['old']}})
+    monkeypatch.setattr(ops, 'plugin_profile_blockers', lambda: [])
+    monkeypatch.setattr(ops, 'claude_provider_blockers', lambda: [])
+    monkeypatch.setattr(ops, 'gateway_setting_blockers', lambda: [])
+    monkeypatch.setattr(ops, 'service', lambda: RUNNING)
+    monkeypatch.setattr(ops, 'service_owns_gateway', lambda name: True)
+    held_ledger(root, monkeypatch, state='running')
+    clean = ops.preflight(lambda: {'blockers': []})
+    assert clean['claude_refused'] == [] and clean['blockers_claude'] == [] and clean['claude']['warnings'] == ['old']
+    monkeypatch.setattr(ops, 'gateway_environment', lambda: POISONED)
+    p = ops.preflight(lambda: {'blockers': []})
+    assert p['ok'] is True and p['blockers'] == [] and p['blockers_codex'] == []
+    assert len(p['blockers_claude']) == 1 and 'ANTHROPIC_BASE_URL' in p['blockers_claude'][0]
+    assert p['claude']['warnings'] == ['old', p['blockers_claude'][0]]
+
+
+def test_the_worker_refuses_a_claude_change_on_such_a_gateway_but_not_a_codex_one(home, monkeypatch):
+    root, _ = home
+    provider(root, '0.3.3')
+    monkeypatch.setattr(ops, 'gateway_hosts_desktop', lambda: True)
+    monkeypatch.setattr(ops, 'require_switch_interfaces', lambda: None)
+    monkeypatch.setattr(ops, 'service', lambda: RUNNING)
+    monkeypatch.setattr(ops, 'preflight', lambda own_state=None: {
+        'ok': True, 'blockers': [], 'claude_refused': ['Hermes cannot use Claude right now.'],
+        'codex': {'selected': 'personal'}, 'claude': {'selected': None, 'state': 'unset'}})
+    monkeypatch.setattr(ops, 'claude_identity', lambda key: pytest.fail('nothing is checked for a refused change'))
+    monkeypatch.setattr(ops, 'usage', lambda account: None)
+    monkeypatch.setattr(ops, 'lapsed_note', lambda account: None)
+    monkeypatch.setattr(ops, 'accounts', lambda: {'work': {}})
+    with pytest.raises(SwitchError, match='cannot use Claude'):
+        ops.WindowsOps({}).preflight({'codex': None, 'claude': 'gmail'})
+    ops.WindowsOps({}).preflight({'codex': 'work', 'claude': None})
+
+
+def test_a_switch_that_restarted_the_gateway_fails_when_the_new_gateway_cannot_use_claude(home, monkeypatch):
+    root, _ = home
+    ops.apply_claude('gmail')
+    worker = live_worker(root, monkeypatch)
+    worker.live = False
+    monkeypatch.setattr(ops, 'service_owns_gateway', lambda name: True)
+    monkeypatch.setattr(ops, 'claude_identity', lambda key: {'email': 'x', 'method': 'token'})
+    assert worker.verify_stores({'codex': None, 'claude': 'gmail'}, {})['claude'] == 'gmail'
+    monkeypatch.setattr(ops, 'gateway_environment', lambda: POISONED)
+    with pytest.raises(SwitchError, match='The Claude account was changed, but hermes cannot use Claude'):
+        worker.verify_stores({'codex': None, 'claude': 'gmail'}, {})
+
+
 def test_an_abandoned_live_switch_does_not_claim_hermes_was_closed(home, monkeypatch):
     root, _ = home
     monkeypatch.setattr(ops, 'LOCK', root / 'lock')
