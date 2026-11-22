@@ -202,6 +202,14 @@ checked against the login, never inferred from a label**.
   without draining); never trust `gateway start`'s exit code; set
   `HERMES_GATEWAY_INSTALL_START_ON_LOGIN=0` so a bare start cannot install a login task; identity
   is (pid, birth time), never pid alone.
+- **A gateway Hermes relaunched hides `gateway run` inside `-c` code.** When Hermes finds its
+  dependencies out of date at start (after an update), `hermes_cli/venv_sync.py` re-runs itself as
+  `python -I -c "...; sys.argv = [..., 'gateway', 'run']; sys._hermes_relaunched = True; ..."`. The
+  child is the gateway that writes `gateway_state.json`; only its launcher parent has `gateway run` in
+  its arguments. Read by arguments alone, the record's PID looked hidden and every switch was refused
+  with "a Hermes gateway is running that the Account Switcher cannot inspect" (the owner's PC,
+  2026-11-22). `relaunched_argv()` reads that list as a literal (never runs it), only when the relaunch
+  mark is present.
 - **A killed gateway leaves its `gateway_state.json` saying `running`**, and Windows soon gives
   its PID to an unrelated program. `gateway_states()` used to see "live PID, months-old heartbeat"
   and refuse every switch with "Gateway activity is unknown" (the owner's PC, 2026-10-20: one
