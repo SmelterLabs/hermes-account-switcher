@@ -1,6 +1,11 @@
 """All identities and homes in the suite are synthetic."""
 import json
+import sys
+from pathlib import Path
 import pytest
+
+# Every test file imports the plugin's modules by name; a file run alone must find them too.
+sys.path.insert(0, str(Path(__file__).parents[1] / 'dashboard'))
 
 
 @pytest.fixture(autouse=True)
