@@ -1,5 +1,25 @@
 # Release notes — Hermes Account Switcher
 
+## 1.4.6
+
+Switching keeps working after a Hermes update. Also ships 1.4.5, which was never published on its own.
+
+- **The cause.** When Hermes finds its dependencies out of date at start (after an update), it re-runs
+  itself as a child process (`hermes_cli/venv_sync.py`, `relaunch_command`). The gateway that writes
+  `gateway_state.json` is then that child, and its own arguments carry `gateway run` only inside `-c`
+  code; only its launcher parent says it in its arguments. The gateway search matched arguments, found
+  only the parent, and so read the child's record as a gateway it could not inspect. Every switch was
+  refused with "A Hermes gateway is running that the Account Switcher cannot inspect". Seen on the
+  owner's PC on 2026-11-22, right after a Hermes update.
+- **The fix.** `relaunched_argv()` reads the relaunch's `sys.argv = [...]` as a literal (parsed, never
+  run), only when Hermes's relaunch mark is present; the gateway search matches on that list.
+- **The window's wording.** A refused check now also reports what a switch would restart, so the window
+  no longer falls back to "the gateway will restart and Hermes Desktop will close and reopen" where
+  nothing restarts.
+- Tests: the relaunched child is the running gateway, its record does not block, look-alikes are not
+  counted, and a refused check carries the restart shape. Checked read-only against the owner's PC
+  while it was blocked: the new search finds the gateway and reports no blocker.
+
 ## 1.4.5
 
 The switch window stays open on the first click. This time the cause is found and removed.
