@@ -230,6 +230,33 @@ def test_nothing_the_plugin_starts_inherits_the_backends_interpreter_overrides(m
     assert len(seen) == 2 and all('PYTHONPATH' not in env for env in seen)
 
 
+@pytest.mark.windows
+def test_a_gateway_started_from_inside_a_claude_code_session_does_not_inherit_that_session(monkeypatch, tmp_path):
+    # Seen on a real PC: a gateway start asked for from inside a Claude Code session handed the gateway that
+    # session's ANTHROPIC_BASE_URL. The Claude provider refused every turn and Hermes answered on its fallback.
+    import windows_ops as ops
+    for key, value in {'CLAUDECODE': '1', 'CLAUDE_CODE_ENTRYPOINT': 'claude-desktop', 'CLAUDE_CONFIG_DIR': 'C:/x',
+                       'ANTHROPIC_BASE_URL': 'https://api.anthropic.com', 'ANTHROPIC_API_KEY': 'k',
+                       'CLAUDE_SUBSCRIPTION_DIRECTSDK_CONFIG_DIR': 'C:/logins/work', 'HERMES_DESKTOP': '1'}.items():
+        monkeypatch.setenv(key, value)
+    seen = []
+    monkeypatch.setattr(ops, 'hermes_launcher', lambda: 'hermes.exe')
+    monkeypatch.setattr(ops.subprocess, 'run', lambda args, **kw: seen.append(kw['env']) or SimpleNamespace(returncode=0))
+    ops.gateway_command('start', tmp_path)
+    worker_launch.launch('pythonw.exe', tmp_path / 'switch_worker.py', 'op', tmp_path)
+    assert len(seen) == 2
+    for env in seen:
+        assert not {key for key in env if key.startswith(('ANTHROPIC_', 'CLAUDE'))} - {'CLAUDE_SUBSCRIPTION_DIRECTSDK_CONFIG_DIR'}
+        assert env['CLAUDE_SUBSCRIPTION_DIRECTSDK_CONFIG_DIR'] == 'C:/logins/work' and env['HERMES_DESKTOP'] == '1'
+
+
+@pytest.mark.windows
+def test_outside_a_claude_code_session_the_users_own_anthropic_settings_are_passed_on(monkeypatch, tmp_path):
+    monkeypatch.delenv('CLAUDECODE', raising=False)
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'k')
+    assert worker_launch.clean_env(tmp_path)['ANTHROPIC_API_KEY'] == 'k'
+
+
 def test_changed_settings_refuse_before_worker_claim_or_switch(operation, monkeypatch):
     receipt, lock = operation
     monkeypatch.setattr(worker, 'settings_digest', lambda: 'changed-digest')
