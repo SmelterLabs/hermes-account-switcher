@@ -1,4 +1,5 @@
 """Bounded Windows operations. Never returns credential/token values to callers."""
+import ast
 import json
 import os
 import queue
@@ -865,11 +866,45 @@ def call(backend, route, body=None):
         raise failure from None
 
 
+RELAUNCH_MARK = 'sys._hermes_relaunched = True'
+
+
+def relaunched_argv(cmdline):
+    """The command a Hermes relaunch really runs, or None. When Hermes finds its dependencies out of date at
+    start it re-runs itself as `python [options] -I -c "...; sys.argv = [...]; sys._hermes_relaunched = True; ..."`
+    (hermes_cli/venv_sync.py relaunch_command), so the gateway's own `gateway run` is inside that code, not in
+    its command line, and the launcher parent is the only process whose arguments say it. The list is read as a
+    literal; nothing in it runs. Seen on the owner's PC on 2026-11-22, after a Hermes update."""
+    if '-c' not in cmdline[:-1]:
+        return None
+    code = cmdline[cmdline.index('-c') + 1]
+    if RELAUNCH_MARK not in code:
+        return None
+    try:
+        statements = ast.parse(code).body
+    except (SyntaxError, ValueError):
+        return None
+    for node in statements:
+        target = node.targets[0] if isinstance(node, ast.Assign) and len(node.targets) == 1 else None
+        if (isinstance(target, ast.Attribute) and target.attr == 'argv'
+                and isinstance(target.value, ast.Name) and target.value.id == 'sys'):
+            try:
+                value = ast.literal_eval(node.value)
+            except (ValueError, SyntaxError):
+                return None
+            return [str(arg) for arg in value] if isinstance(value, list) else None
+    return None
+
+
 def stock_gateways():
     """Live `hermes ... gateway run` processes. Stock Hermes has no Windows service to ask."""
     found = []
     for process in psutil.process_iter(['pid', 'cmdline', 'create_time']):
-        args = [str(arg).lower() for arg in process.info['cmdline'] or []]
+        cmdline = [str(arg) for arg in process.info['cmdline'] or []]
+        relaunched = relaunched_argv(cmdline)
+        if relaunched is not None:
+            cmdline = cmdline[:1] + relaunched
+        args = [arg.lower() for arg in cmdline]
         if 'gateway' in args[:-1] and args[args.index('gateway') + 1] == 'run' and any('hermes' in arg for arg in args):
             found.append(process.info)
     return found
@@ -1096,7 +1131,16 @@ def preflight(own_state=None):
     blockers = list(dict.fromkeys(stale_desktop_blockers() + plugin_profile_blockers() + claude_provider_blockers()
                                   + gateway_setting_blockers()))
     if blockers:
-        return {'ok': False, 'blockers': blockers, **summary}
+        # Say what a switch would restart even while one is refused: without it the window falls back to
+        # "the gateway will restart and Desktop will close and reopen", which is wrong on the unified runtime.
+        try:
+            restarts_for = {'codex': not live_switch_possible({'codex': True}),
+                            'claude': not live_switch_possible({'claude': True})}
+            shape = {'desktop_restarts': not gateway_hosts_desktop(), 'restarts': any(restarts_for.values()),
+                     'restarts_for': restarts_for}
+        except Exception:
+            shape = {}
+        return {'ok': False, 'blockers': blockers, **shape, **summary}
     hosted = gateway_hosts_desktop()
     gateway = hosted or gateway_in_use()
     if gateway and service()['status'] != 'running':

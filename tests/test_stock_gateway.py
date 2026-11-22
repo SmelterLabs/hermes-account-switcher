@@ -297,6 +297,53 @@ def test_a_gateway_the_search_can_see_is_not_blocked(hidden, monkeypatch):
     assert ops.gateway_setting_blockers() == []
 
 
+# Hermes re-runs itself when it finds its dependencies out of date at start (hermes_cli/venv_sync.py
+# relaunch_command). The gateway that writes the record is then a child whose `gateway run` is inside `-c` code;
+# only its launcher parent says it in its arguments. Seen on a real PC after a Hermes update: every switch refused.
+RELAUNCHED = ['C:/hermes/tools/python/python.exe', '-I', '-c',
+              "import sys, runpy; sys.path.insert(0, 'C:\\\\hermes\\\\hermes-agent'); "
+              "sys.argv = ['C:\\\\hermes\\\\hermes-agent\\\\hermes_cli\\\\main.py', 'gateway', 'run']; "
+              "sys._hermes_relaunched = True; runpy.run_module('hermes_cli.main', run_name='__main__', alter_sys=True)"]
+LAUNCHER = ['C:/hermes/tools/python/python.exe', '-m', 'hermes_cli.main', 'gateway', 'run']
+
+
+def test_a_relaunched_gateway_is_the_running_one(stock, monkeypatch):
+    processes(monkeypatch, (30, LAUNCHER, 100.0), (31, RELAUNCHED, 104.0))
+    assert ops.service() == {'status': 'running', 'pid': 31, 'born': 104.0}
+
+
+def test_a_relaunched_gateway_that_wrote_the_record_is_not_blocked(hidden, monkeypatch):
+    gateway_record(hidden, 31)
+    processes(monkeypatch, (30, LAUNCHER, 100.0), (31, RELAUNCHED, 104.0))
+    assert ops.gateway_setting_blockers() == []
+
+
+@pytest.mark.parametrize('cmdline', [
+    # A relaunch of another Hermes command is not a running gateway.
+    RELAUNCHED[:3] + [RELAUNCHED[3].replace("'gateway', 'run'", "'gateway', 'restart'")],
+    # Code that only mentions the words, without Hermes's relaunch mark, is not read.
+    ['python.exe', '-c', "import sys; sys.argv = ['hermes', 'gateway', 'run']"],
+    # Code that does not parse, or a non-literal argv, is not guessed at.
+    ['python.exe', '-c', 'sys._hermes_relaunched = True; sys.argv = ['],
+    ['python.exe', '-c', "sys.argv = list(x); sys._hermes_relaunched = True; 'hermes gateway run'"],
+])
+def test_only_a_relaunched_gateway_run_counts(stock, monkeypatch, cmdline):
+    processes(monkeypatch, (40, cmdline, 1.0))
+    assert ops.service() == {'status': 'stopped', 'pid': None, 'born': None}
+
+
+def test_a_refused_switch_still_says_what_it_would_restart(hidden, monkeypatch):
+    gateway_record(hidden, 501)
+    monkeypatch.setattr(ops, 'selection_summary', lambda: {'codex': {'selected': 'only'}})
+    monkeypatch.setattr(ops, 'plugin_profile_blockers', lambda: [])
+    monkeypatch.setattr(ops, 'claude_provider_blockers', lambda: [])
+    monkeypatch.setattr(ops, 'gateway_hosts_desktop', lambda: True)
+    monkeypatch.setattr(ops, 'claude_provider_version', lambda: ops.LIVE_CLAUDE_PROVIDER)
+    result = ops.preflight()
+    assert result['ok'] is False
+    assert result['restarts_for'] == {'codex': False, 'claude': False} and result['desktop_restarts'] is False
+
+
 @pytest.mark.parametrize('state, age, alive', [('running', 600, True), ('stopped', 0, True), ('running', 0, False)])
 def test_an_old_record_a_stopped_gateway_or_a_dead_one_is_not_a_gateway(hidden, monkeypatch, state, age, alive):
     gateway_record(hidden, 500, state, age)
