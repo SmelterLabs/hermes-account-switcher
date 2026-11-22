@@ -172,7 +172,7 @@ class HiddenTerminal:
             self._k32.CloseHandle(handle)
 
 
-LINK = re.compile(r'https://claude\.(?:ai|com)/\S+')
+LINK = re.compile(r'https://claude\.ai/\S+|https://claude\.com/\S+')
 YEAR_TOKEN = re.compile(r'sk-ant-oat01-[A-Za-z0-9_-]{40,}')
 
 

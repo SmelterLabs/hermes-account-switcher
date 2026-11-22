@@ -48,14 +48,22 @@ def scan(rel, data):
         # "tester" is the test machine's throwaway account; it appears in the live-run receipts.
         if user.lower() not in ('<user>', '<you>', 'example-user', 'public', 'default', 'tester'):
             raise ValueError('Privacy scan: private user path in ' + rel)
-    if re.search(r'\b(?:sk-|ghp_|github_pat_)[A-Za-z0-9_-]{20,}', text):
-        raise ValueError('Secret-shaped content in ' + rel)
+    for secret in re.findall(r'\b(?:sk-|ghp_|github_pat_)[A-Za-z0-9_-]{20,}', text):
+        # The year-long sign-in tests need token-shaped fixtures. Allowed only under tests/ and
+        # only with this exact prefix, which no real Anthropic token carries.
+        if not (rel.startswith('tests/') and secret.startswith('sk-ant-oat01-fixture')):
+            raise ValueError('Secret-shaped content in ' + rel)
     approved = {'github.com', 'raw.githubusercontent.com', 'registry.npmjs.org',
                 'pypi.org', 'files.pythonhosted.org', 'docs.python.org',
                 'hermes-agent.nousresearch.com', 'opencollective.com',
                 'tidelift.com', 'www.npmjs.com', '127.0.0.1', 'localhost',
-                'chatgpt.com', 'api.openai.com', 'api.anthropic.com'}
-    for url in re.findall(r'https?://[A-Za-z0-9][^\s"\'<>`]*', text):
+                'chatgpt.com', 'api.openai.com', 'api.anthropic.com',
+                # Claude Code prints its sign-in link on these hosts (setup.cmd claude <key>).
+                'claude.ai', 'claude.com'}
+    for url in re.findall(r'https?://[A-Za-z0-9][^\s"\'<>`|]*', text):
+        # A link written as a regular expression is checked by its host with the dots unescaped;
+        # each alternative (split at "|") is checked on its own.
+        url = url.replace('\\.', '.')
         host = urlsplit(url.split('{', 1)[0]).hostname
         if host not in approved and host not in ('example.com', 'example.org', 'example.invalid'):
             raise ValueError('Unreviewed external URL in ' + rel)
