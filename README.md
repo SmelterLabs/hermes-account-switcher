@@ -19,14 +19,16 @@ What that needs, and what to expect:
   three days ahead and gives the command to sign in again.
 
 - Plugin ID: `account-switcher`
-- Version: **1.4.5** ([latest release](https://github.com/SmelterLabs/hermes-account-switcher/releases/latest))
+- Version: **1.4.6** ([latest release](https://github.com/SmelterLabs/hermes-account-switcher/releases/latest))
 - Platform: **Windows only**
 - Scope: local Hermes profiles on this machine. Remote machines, the standalone Codex app, and
   Claude Code's own sessions are not touched.
 
 ## Status
 
-Version **1.4.5** finds and removes the real reason the switch window closed by itself after the first
+Version **1.4.6** keeps switching working after a Hermes update: Hermes now sometimes restarts its gateway
+in a new way after updating, and 1.4.5 took that gateway for one it could not inspect and refused every
+switch. It also stops a refused switch from wrongly saying the gateway would restart. Version 1.4.5 finds and removes the real reason the switch window closed by itself after the first
 click: opening the window read a file that Hermes Desktop watches, and Desktop took the read for an edit
 and reloaded the plugin. 1.4.4 kept the window open when Hermes Desktop rebuilds the status-bar button. 1.4.3 makes a switch take about 2 seconds with nothing restarted: Hermes stays loaded in
 the background while Hermes Desktop is open, so the click no longer waits for it to start (1.9 s
