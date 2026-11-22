@@ -392,6 +392,41 @@ def claude_provider_blockers():
     return blockers
 
 
+def claude_refusals(env):
+    """The variables in a process's environment that make the Claude subscription provider refuse every turn
+    from that process (its own check, in `directsdk._run`): an endpoint override at any value, or another
+    backend switched on. Hermes then answers on its fallback model and nothing else says so."""
+    env = {str(key).upper(): value for key, value in env.items()}
+    found = ['ANTHROPIC_BASE_URL'] if env.get('ANTHROPIC_BASE_URL') else []
+    return found + [key for key in ('CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY')
+                    if str(env.get(key) or '').lower() not in ('', '0', 'false', 'no', 'off')]
+
+
+def gateway_environment():
+    """The running gateway's environment as it is now; empty with no gateway. A gateway run by another
+    account cannot be read and raises."""
+    pid = service()['pid']
+    return psutil.Process(pid).environ() if pid else {}
+
+
+def claude_refused_warnings(env=None):
+    """Why the running gateway cannot answer on Claude at all, as text for the window; empty when it can, when
+    no Claude account is set up, or when the gateway cannot be read (never a guess). `env` is the gateway's own
+    environment when the caller is the gateway; otherwise the running gateway's is read."""
+    if not CLAUDE:
+        return []
+    try:
+        found = claude_refusals(gateway_environment() if env is None else env)
+    except (SwitchError, psutil.Error, OSError):
+        return []
+    if not found:
+        return []
+    return [f'Hermes cannot use Claude right now: its gateway was started with {" and ".join(found)} set, which the '
+            'Claude subscription provider refuses, so every Claude turn is answered by the fallback model instead. '
+            'Restart the gateway with "hermes gateway restart", from a terminal that is not inside a Claude Code '
+            'session. If this message stays, remove that variable from the Windows environment variables.']
+
+
 def codex_stores():
     """(home, accounts) for root and every profile that owns Codex logins.
 
@@ -1180,7 +1215,13 @@ def preflight(own_state=None):
     else:
         busy_codex = busy if restarts_for['codex'] else []
         busy_claude = busy if restarts_for['claude'] else []
-    return {'ok': not blockers, 'blockers': blockers, 'busy': busy,
+    # A gateway that cannot answer on Claude stops a Claude change only: the switch would report success while
+    # every turn went to the fallback model. Shown as a Claude warning too, whatever is being changed.
+    refused = claude_refused_warnings() if gateway else []
+    if refused:
+        busy_claude = busy_claude + refused
+        summary['claude']['warnings'] = [*summary['claude'].get('warnings', []), *refused]
+    return {'ok': not blockers, 'blockers': blockers, 'busy': busy, 'claude_refused': refused,
             'blockers_codex': busy_codex, 'blockers_claude': busy_claude,
             'desktop_restarts': not hosted, 'restarts': any(restarts_for.values()), 'restarts_for': restarts_for,
             **summary}
@@ -1642,6 +1683,8 @@ class WindowsOps:
         # Running work blocks only a switch that restarts.
         if not p['ok'] or (not self.live and p.get('busy')):
             raise SwitchError(' '.join(p['blockers'] or p.get('busy') or []))
+        if request.get('claude') and p.get('claude_refused'):
+            raise SwitchError(' '.join(p['claude_refused']))
         previous = {}
         if request.get('codex'):
             if p['codex']['selected'] not in EMAILS:
@@ -1933,6 +1976,10 @@ class WindowsOps:
             method = self.record.get('claude_identity_before') if self.live else None
             result['claude'] = claude_target
             result['claude_identity'] = method or claude_identity(claude_target)['method']
+            # A gateway this switch restarted must be able to answer on Claude, or the switch did not work.
+            refused = claude_refused_warnings() if self.gateway and not self.live else []
+            if refused:
+                raise SwitchError('The Claude account was changed, but ' + refused[0][0].lower() + refused[0][1:])
         if getattr(self, 'verify_began', None) is not None:
             self.checkpoint('verified', seconds=round(time.monotonic() - self.verify_began, 1))
         return result

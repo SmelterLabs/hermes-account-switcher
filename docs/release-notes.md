@@ -1,5 +1,24 @@
 # Release notes — Hermes Account Switcher
 
+## 1.4.8
+
+The plugin says so when Hermes cannot use Claude at all.
+
+- **The gap.** The Claude subscription provider refuses every turn from a process whose environment
+  holds `ANTHROPIC_BASE_URL` (at any value) or switches on Bedrock, Vertex or Foundry. Hermes then
+  answers on its fallback model. A switch on such a gateway wrote the choice, read it back and reported
+  success; nothing looked at whether the gateway could use the account.
+- **The check.** `claude_refusals(env)` applies the provider's rule to an environment.
+  `claude_refused_warnings()` reads the running gateway's environment and returns the reason as text.
+  A gateway that cannot be read (run by another account) is never reported as broken. No Claude turn is
+  sent.
+- **Where it shows.** `preflight` returns it as `claude_refused`, in `blockers_claude` (a Codex-only
+  switch is not stopped) and among the Claude warnings; the worker refuses a Claude change with the
+  reason; `verify_stores` fails a switch whose restarted gateway is in that state; `/status` on the
+  unified runtime, which the gateway itself serves, adds the warning from its own environment.
+- Tests: the rule, the unreadable gateway, the preflight shape, the worker's refusal for Claude only, and
+  the failed verification after a restart.
+
 ## 1.4.7
 
 A gateway the plugin starts no longer inherits a Claude Code session.

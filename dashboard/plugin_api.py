@@ -104,6 +104,9 @@ def status(request: Request):
             warning = ops.revert_warning(last, summary)
             if warning:
                 summary['codex']['warnings'] = [*summary['codex']['warnings'], warning]
+            if ops.gateway_hosts_desktop():
+                # The gateway serves this route, so its own environment is the one the Claude provider reads.
+                summary['claude']['warnings'] = [*summary['claude']['warnings'], *ops.claude_refused_warnings(os.environ)]
             return {**summary, 'last_operation': last, 'in_progress': in_progress,
                     'blockers': [IN_PROGRESS] if in_progress else [], 'scope': SCOPE}
     except SettingsError as exc:

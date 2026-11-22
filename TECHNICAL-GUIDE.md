@@ -6,7 +6,7 @@ not been proven is in [docs/acceptance.md](docs/acceptance.md).
 
 ## What this is
 
-A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.4.7)
+A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.4.8)
 that switches which Codex login and which Claude subscription account every local Hermes profile
 on the PC uses, through one idle-only, verified restart. It began as a private tool tailored to
 one machine and is packaged here for anyone. **The working behavior was preserved, not
@@ -239,7 +239,13 @@ checked against the login, never inferred from a label**.
   (`CLAUDECODE`, `CLAUDE*`, `ANTHROPIC_*`; never `CLAUDE_SUBSCRIPTION_DIRECTSDK_*`) when this process
   descends from one: a gateway started with them keeps them until its next restart, and the Claude
   provider refuses every turn while `ANTHROPIC_BASE_URL` is set, at any value. The switch itself still
-  reports success, and Hermes answers on its fallback model. The worker catches `BaseException`, so a process exit becomes
+  reports success, and Hermes answers on its fallback model. Since 1.4.8 that state is reported:
+  `claude_refusals` mirrors the provider's own refusal rule, `claude_refused_warnings` reads the
+  running gateway's environment (`gateway_environment`, psutil; unreadable is never called broken),
+  `preflight` returns it as `claude_refused`, in `blockers_claude` and as a Claude warning, the worker
+  refuses a Claude change on it, `verify_stores` fails a switch whose restarted gateway has it, and
+  `/status` on the unified runtime adds the warning from its own environment. No Claude turn is ever
+  sent to test this. The worker catches `BaseException`, so a process exit becomes
   a failed receipt.
 - **A backend never calls itself over HTTP:** `/preflight` answers for its own process directly.
 - **A single-profile Desktop backend has no `--profile` argument**; discovery names it `default`.
