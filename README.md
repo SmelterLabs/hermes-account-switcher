@@ -15,18 +15,22 @@ What that needs, and what to expect:
   Claude switch restarts the gateway.
 - **A reply that is already being written finishes on the old account.** The next message uses the
   new one.
-- **Claude sign-ins need renewing about every four weeks** (Anthropic's limit). The window warns
-  three days ahead and gives the command to sign in again.
+- **Claude sign-ins last a year.** `setup.cmd claude <key>` adds Claude Code's year-long sign-in
+  (`claude setup-token`) to each account, so Hermes stops needing a new sign-in every four weeks. The
+  window warns two weeks before it runs out (three days ahead for an account still on the four-week one).
 
 - Plugin ID: `account-switcher`
-- Version: **1.4.8** ([latest release](https://github.com/SmelterLabs/hermes-account-switcher/releases/latest))
+- Version: **1.4.9** ([latest release](https://github.com/SmelterLabs/hermes-account-switcher/releases/latest))
 - Platform: **Windows only**
 - Scope: local Hermes profiles on this machine. Remote machines, the standalone Codex app, and
   Claude Code's own sessions are not touched.
 
 ## Status
 
-Version **1.4.8** says so when Hermes cannot use Claude at all: the window shows why, a Claude switch is
+Version **1.4.9** gives each Claude account a year-long sign-in, so the four-weekly sign-in is no longer
+needed. Run `setup.cmd claude <key>` once per account: while its four-week sign-in still works, that is one
+browser approval. The switch checks the year-long sign-in with Anthropic before using it, without sending a
+message. Version 1.4.8 says so when Hermes cannot use Claude at all: the window shows why, a Claude switch is
 refused with the reason, and a switch that restarted the gateway fails if the new gateway cannot answer on
 Claude. Before, the switch reported success while every turn went to the fallback model. Version 1.4.7 stops a gateway restart from handing the gateway a Claude Code session's settings: a
 switch asked for from inside a Claude Code session did that, and every Claude turn then fell back to another
@@ -150,6 +154,13 @@ that account, approve, and paste the code the page shows back into the terminal.
 asks Anthropic who signed in; a login made as the wrong account is refused and its login file is
 deleted from that folder, so the folder never holds a login for another account. To sign an
 account in again later: `setup.cmd claude personal`.
+
+Right after that sign-in, the same command makes the account's **year-long sign-in** (Claude Code's
+`claude setup-token`): one more link on the clipboard, one more approval in the private window. It is
+kept only if Anthropic places it in the same account as the sign-in just checked, and it is stored next to
+that login as `oauth-token.txt`, which the Claude provider hands to Claude Code. It lasts a year; running
+`setup.cmd claude personal` for an account that already has one changes nothing. A year-long sign-in may
+only make model requests, which is all Hermes asks of it.
 
 ### More than one profile
 

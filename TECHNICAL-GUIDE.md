@@ -6,7 +6,7 @@ not been proven is in [docs/acceptance.md](docs/acceptance.md).
 
 ## What this is
 
-A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.4.8)
+A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.4.9)
 that switches which Codex login and which Claude subscription account every local Hermes profile
 on the PC uses, through one idle-only, verified restart. It began as a private tool tailored to
 one machine and is packaged here for anyone. **The working behavior was preserved, not
@@ -273,6 +273,24 @@ checked against the login, never inferred from a label**.
   days later, and renewals do not move it (seen on the owner's PC, 2026-10-23). `sign_in_expired()` reads it:
   such an account shows as not logged in, and the check refuses it without renewing.
   `sign_in_warnings()` adds a Claude notice to the dialog from `SIGN_IN_NOTICE_DAYS` (3) before that date.
+- **The year-long sign-in replaces the four-week one (1.4.9).** `claude setup-token` makes a one-year token
+  that may only make model requests. The Claude provider (0.3.5 seen) reads `<folder>\oauth-token.txt` on
+  every spawn and passes it as `CLAUDE_CODE_OAUTH_TOKEN`, which wins over the folder's `.credentials.json`
+  (`claude auth status` then reports `authMethod: oauth_token`), so a live switch carries it with no restart.
+  The token cannot read `/api/oauth/profile` (HTTP 403), so `claude_identity()` checks it by organization:
+  an empty `POST /v1/messages/count_tokens` is refused with 400 before any model runs, and every answer to
+  an accepted token carries `anthropic-organization-id` (401 for a refused token). That id must equal the
+  one in `oauth-token-account.json`, recorded when the token was checked against the folder's own verified
+  login (same call on the login's access token). A token without a record is checked against the folder's
+  login on each switch until `setup.cmd claude <key>` records it. For a personal plan the organization is the
+  account; on a Team or Enterprise plan it proves the organization only. Expiry is the record's `created` (or
+  the file's time) plus 365 days; `YEAR_TOKEN_NOTICE_DAYS` (14). A dead or foreign token is removed by the
+  guided step, never by a switch.
+- **`claude setup-token` prints nothing unless it runs in a terminal.** With piped output it prints no link
+  and waits. `claude_login.py` runs it in a hidden Windows pseudo console (`HiddenTerminal`, ConPTY through
+  ctypes, 2000 columns so nothing wraps), takes the link and the token off its output, and writes the token to
+  the folder without showing it. The child needs `STARTF_USESTDHANDLES` with empty handles, or it inherits the
+  script's redirected handles and the pseudo console stays blank.
 - **Claude's sign-in lands as whoever the browser is signed in as.** The identity check catches
   it. A private browser window avoids it.
 - **The identity check reaches Anthropic over the network and can fail for a moment;** it retries

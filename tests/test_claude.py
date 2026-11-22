@@ -525,3 +525,174 @@ def test_status_rows_carry_when_the_sign_in_ends(home):
     path.write_text(json.dumps(data), encoding='utf-8')
     rows = {r['key']: r for r in ops.claude_accounts()}
     assert rows['anthropic']['sign_in_ends'] == 1_900_000_000 and rows['gmail']['sign_in_ends'] is None
+
+
+def year_token(key, organization='org-one', created=None, recorded=True, email=None):
+    folder = ops.claude_dir(key)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / ops.YEAR_TOKEN_FILE).write_text(f'sk-ant-oat01-fixture-{key}\n', encoding='utf-8')
+    if recorded:
+        (folder / ops.YEAR_TOKEN_RECORD).write_text(json.dumps({
+            'email': email or ops.CLAUDE[key][1], 'organization': organization,
+            'created': time.time() if created is None else created}), encoding='utf-8')
+
+
+def test_a_year_long_sign_in_counts_as_logged_in_and_never_shows_its_token(home):
+    year_token('gmail', created=time.time() - 86400)
+    rows = {r['key']: r for r in ops.claude_accounts()}
+    assert rows['gmail']['logged_in'] is True and rows['gmail']['year_token'] is True
+    assert abs(rows['gmail']['sign_in_ends'] - (time.time() - 86400 + 365 * 86400)) < 5
+    assert rows['anthropic']['year_token'] is False
+    assert 'sk-ant-oat01' not in json.dumps(rows)
+    year_token('gmail', created=time.time() - 366 * 86400)
+    assert next(r for r in ops.claude_accounts() if r['key'] == 'gmail')['logged_in'] is False
+
+
+def test_a_year_long_sign_in_is_verified_by_its_organization_not_the_profile(home, monkeypatch):
+    year_token('gmail', organization='org-one')
+    sent = []
+    monkeypatch.setattr(ops, '_token_organization', lambda token: sent.append(token) or 'org-one')
+    monkeypatch.setattr(ops, '_oauth_profile', lambda token: pytest.fail('a year-long token cannot read the profile'))
+    assert ops.claude_identity('gmail') == {'email': ops.CLAUDE['gmail'][1], 'method': 'year token'}
+    assert sent == ['sk-ant-oat01-fixture-gmail']
+
+
+def test_a_year_long_sign_in_of_another_account_is_refused(home, monkeypatch):
+    year_token('gmail', organization='org-one')
+    monkeypatch.setattr(ops, '_token_organization', lambda token: 'org-two')
+    with pytest.raises(ops.WrongAccount, match='belongs to another account'):
+        ops.claude_identity('gmail')
+    # A record written for another address is no record: the folder's own login must vouch.
+    year_token('gmail', organization='org-two', email='someone@example.invalid')
+    with pytest.raises(ops.YearTokenUnchecked, match='setup.cmd claude gmail'):
+        ops.claude_identity('gmail')
+
+
+def test_a_refused_or_run_out_year_long_sign_in_asks_for_a_new_one(home, monkeypatch):
+    import urllib.error
+    year_token('gmail')
+
+    def refused(token):
+        raise urllib.error.HTTPError('https://api.anthropic.com', 401, 'private-reason-text', {}, None)
+    monkeypatch.setattr(ops, '_token_organization', refused)
+    with pytest.raises(ops.YearTokenDead) as e:
+        ops.claude_identity('gmail')
+    assert 'no longer accepts' in str(e.value) and 'private-reason-text' not in str(e.value)
+    year_token('gmail', created=time.time() - 400 * 86400)
+    monkeypatch.setattr(ops, '_token_organization', lambda token: pytest.fail('a run-out token is not sent'))
+    with pytest.raises(ops.YearTokenDead, match=r'ran out on .*"setup.cmd claude gmail"'):
+        ops.claude_identity('gmail')
+
+
+def test_a_network_blip_does_not_condemn_a_year_long_sign_in(home, monkeypatch):
+    year_token('gmail')
+    monkeypatch.setattr(ops.time, 'sleep', lambda seconds: None)
+    calls = []
+
+    def flaky(token):
+        calls.append(1)
+        if len(calls) == 1:
+            raise OSError('fixture network blip')
+        return 'org-one'
+    monkeypatch.setattr(ops, '_token_organization', flaky)
+    assert ops.claude_identity('gmail')['method'] == 'year token' and len(calls) == 2
+    monkeypatch.setattr(ops, '_token_organization', lambda token: (_ for _ in ()).throw(OSError('down')))
+    with pytest.raises(SwitchError) as e:
+        ops.claude_identity('gmail')
+    assert not isinstance(e.value, (ops.YearTokenDead, ops.WrongAccount)) and 'could not be reached (OSError)' in str(e.value)
+
+
+def test_an_unrecorded_year_long_sign_in_is_vouched_for_by_the_folders_own_login(home, monkeypatch):
+    login('gmail', ops.CLAUDE['gmail'][1])
+    year_token('gmail', recorded=False)
+    monkeypatch.setattr(ops, '_oauth_profile', lambda token: ops.CLAUDE['gmail'][1])
+    orgs = {'sk-ant-oat01-fixture-gmail': 'org-one', 'fixture-access-gmail': 'org-one'}
+    monkeypatch.setattr(ops, '_token_organization', lambda token: orgs[token])
+    assert ops.claude_identity('gmail')['method'] == 'year token'
+    orgs['fixture-access-gmail'] = 'org-two'
+    with pytest.raises(ops.WrongAccount):
+        ops.claude_identity('gmail')
+    (ops.claude_dir('gmail') / '.credentials.json').unlink()
+    with pytest.raises(ops.YearTokenUnchecked):
+        ops.claude_identity('gmail')
+
+
+def test_the_organization_is_read_from_a_refused_empty_count(monkeypatch):
+    import io
+    import urllib.error
+
+    def answer(req, timeout):
+        assert req.full_url.endswith('/v1/messages/count_tokens') and req.data == b'{}'
+        raise urllib.error.HTTPError(req.full_url, 400, 'bad request', {'anthropic-organization-id': 'org-one'}, io.BytesIO(b''))
+    monkeypatch.setattr(ops.urllib.request, 'urlopen', answer)
+    assert ops._token_organization('sk-ant-oat01-fixture') == 'org-one'
+
+    def refused(req, timeout):
+        raise urllib.error.HTTPError(req.full_url, 401, 'no', {}, io.BytesIO(b''))
+    monkeypatch.setattr(ops.urllib.request, 'urlopen', refused)
+    with pytest.raises(urllib.error.HTTPError):
+        ops._token_organization('sk-ant-oat01-fixture')
+
+
+def test_a_year_long_sign_in_is_announced_two_weeks_ahead(home):
+    now = 1_800_000_000
+    rows = [{'key': 'a', 'label': 'A', 'sign_in_ends': now + 10 * 86400, 'year_token': True},
+            {'key': 'b', 'label': 'B', 'sign_in_ends': now + 20 * 86400, 'year_token': True},
+            {'key': 'c', 'label': 'C', 'sign_in_ends': now + 10 * 86400, 'year_token': False}]
+    [line] = ops.sign_in_warnings(rows, now)
+    assert line.startswith('The Claude A year-long sign-in runs out on ') and '"setup.cmd claude a"' in line
+
+@pytest.fixture
+def guided(home, monkeypatch):
+    sys.path.insert(0, str(Path(__file__).parents[1]))
+    import claude_login
+    typed = []
+
+    class FakeTerminal:
+        def __init__(self, argv, env):
+            assert argv[1:] == ['setup-token'] and env['CLAUDE_CONFIG_DIR'] == str(ops.claude_dir('gmail'))
+            assert not any(k.startswith('ANTHROPIC_') for k in env)
+
+        def text(self):
+            shown = '\x1b[2J Use the URL below https://claude.ai/oauth/authorize?fixture \x1b[3;1H'
+            return shown + (' Your OAuth token: sk-ant-oat01-' + 'f' * 60 + ' ' if typed else '')
+
+        def type(self, text):
+            typed.append(text)
+
+        def running(self):
+            return True
+
+        def close(self):
+            pass
+    monkeypatch.setattr(claude_login, 'HiddenTerminal', FakeTerminal)
+    monkeypatch.setattr(claude_login.ops, 'claude_cli', lambda path=None: 'claude.exe')
+    monkeypatch.setattr(claude_login.subprocess, 'run', lambda *a, **k: None)
+    monkeypatch.setattr('builtins.input', lambda prompt='': 'fixture-code')
+    login('gmail', ops.CLAUDE['gmail'][1])
+    return claude_login, typed
+
+
+def test_the_guided_year_long_sign_in_is_kept_only_for_the_same_account(guided, monkeypatch, capsys):
+    claude_login, typed = guided
+    orgs = {'fixture-access-gmail': 'org-one'}
+    monkeypatch.setattr(ops, '_token_organization', lambda token: orgs.get(token, 'org-two'))
+    assert claude_login.make_year_token('gmail') is False
+    assert typed == ['fixture-code\r'] and ops.year_token('gmail') is None
+    assert 'another account' in capsys.readouterr().out
+    typed.clear()
+    orgs['sk-ant-oat01-' + 'f' * 60] = 'org-one'
+    assert claude_login.make_year_token('gmail') is True
+    assert ops.year_token('gmail') == 'sk-ant-oat01-' + 'f' * 60
+    assert ops.year_token_record('gmail')['organization'] == 'org-one'
+    assert 'sk-ant-oat01' not in capsys.readouterr().out
+
+
+def test_signing_in_again_removes_a_dead_year_long_sign_in_and_makes_a_new_one(guided, monkeypatch):
+    claude_login, typed = guided
+    year_token('gmail', created=time.time() - 400 * 86400)
+    monkeypatch.setattr(ops, '_oauth_profile', lambda token: ops.CLAUDE['gmail'][1])
+    monkeypatch.setattr(ops, '_token_organization', lambda token: 'org-one')
+    assert claude_login.enrol('gmail') is True
+    assert ops.year_token('gmail') == 'sk-ant-oat01-' + 'f' * 60
+    assert ops.year_token_ends('gmail') > time.time() + 360 * 86400

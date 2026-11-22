@@ -1,5 +1,22 @@
 # Release notes — Hermes Account Switcher
 
+## 1.4.9
+
+Claude accounts get a year-long sign-in, so Hermes stops needing a new Claude sign-in every four weeks.
+
+- **The gap.** The folder's own Claude login stops renewing about 28 days after sign-in
+  (`refreshTokenExpiresAt`), so every account needed `setup.cmd claude <key>` each month.
+- **The change.** `claude_login.py` now follows a verified login with `claude setup-token` (one browser
+  approval) and stores the year-long token as `oauth-token.txt` in the account's folder, where the Claude
+  provider already reads it. It is kept only when its Anthropic organization matches the verified login's.
+- **The check.** `claude_identity()` verifies a folder's year-long token by organization, through a token
+  count that is refused before any model runs (nothing billed), against `oauth-token-account.json`.
+  `claude_accounts()` reports such an account as logged in until a year after the token was made, and the
+  window warns 14 days ahead.
+- **Limits.** The token may only make model requests: Remote Control and claude.ai connectors do not work
+  with it, which Hermes does not use. On a Team or Enterprise plan the check proves the organization, not the
+  seat.
+
 ## 1.4.8
 
 The plugin says so when Hermes cannot use Claude at all.

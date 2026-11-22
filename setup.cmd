@@ -2,7 +2,8 @@
 rem Hermes Account Switcher: install and set up with Hermes's own Python, so no separate Python is needed.
 rem   setup.cmd                        install into the first profile and set up the Codex accounts
 rem   setup.cmd profile <name>         install into one more profile (the accounts are shared)
-rem   setup.cmd claude <key> <email>   add a Claude account and sign it in (the key alone signs it in again)
+rem   setup.cmd claude <key> <email>   add a Claude account and give it a year-long sign-in (the key alone
+rem                                    renews it, or checks it)
 rem   setup.cmd service <name>         only if the gateway runs as a Windows service that setup did not find
 rem   setup.cmd show                   show what setup would write, and write nothing (asks nothing)
 rem   setup.cmd auto ["email=Name" ...]  write without asking; an account without a name gets the one offered
