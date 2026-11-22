@@ -5,11 +5,27 @@ import subprocess
 import sys
 
 
+def claude_code_session(key):
+    """True for a variable a Claude Code session gives the programs it runs: its own markers, and the
+    Anthropic endpoint and login it is using. The Claude provider's own settings are not among them."""
+    key = key.upper()
+    return key.startswith('ANTHROPIC_') or (key.startswith('CLAUDE') and not key.startswith('CLAUDE_SUBSCRIPTION_DIRECTSDK_'))
+
+
 def clean_env(home):
-    """This process's environment without the interpreter overrides a Desktop backend runs under. With the
-    backend's PYTHONPATH inherited, importing any Hermes module makes Hermes's startup code relaunch the
-    process under another interpreter and exit, which ended every switch before its first check."""
-    env = {key: value for key, value in os.environ.items() if key.upper() not in ('PYTHONPATH', 'PYTHONHOME')}
+    """This process's environment without what must not reach a child.
+
+    The interpreter overrides a Desktop backend runs under: with the backend's PYTHONPATH inherited, importing
+    any Hermes module makes Hermes's startup code relaunch the process under another interpreter and exit,
+    which ended every switch before its first check.
+
+    A Claude Code session's variables, when this process descends from one (a switch or a gateway start asked
+    for from inside a Claude Code session): a gateway started with them keeps them for as long as it runs, and
+    the Claude provider refuses every turn while ANTHROPIC_BASE_URL is set, so Hermes answers on its fallback
+    model instead."""
+    inside_claude_code = any(key.upper() == 'CLAUDECODE' for key in os.environ)
+    env = {key: value for key, value in os.environ.items()
+           if key.upper() not in ('PYTHONPATH', 'PYTHONHOME') and not (inside_claude_code and claude_code_session(key))}
     env['HERMES_HOME'] = str(home)
     return env
 

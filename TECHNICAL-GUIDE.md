@@ -6,7 +6,7 @@ not been proven is in [docs/acceptance.md](docs/acceptance.md).
 
 ## What this is
 
-A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.4.6)
+A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.4.7)
 that switches which Codex login and which Claude subscription account every local Hermes profile
 on the PC uses, through one idle-only, verified restart. It began as a private tool tailored to
 one machine and is packaged here for anyone. **The working behavior was preserved, not
@@ -235,7 +235,11 @@ checked against the login, never inferred from a label**.
   Administrators group. An SSH session into Windows is an administrator session.
 - **Nothing the plugin starts may inherit the Desktop backend's `PYTHONPATH`:** with it, importing
   any Hermes module relaunches the process under another interpreter and exits. Every child goes
-  through `worker_launch.clean_env`. The worker catches `BaseException`, so a process exit becomes
+  through `worker_launch.clean_env`. The same function drops a Claude Code session's variables
+  (`CLAUDECODE`, `CLAUDE*`, `ANTHROPIC_*`; never `CLAUDE_SUBSCRIPTION_DIRECTSDK_*`) when this process
+  descends from one: a gateway started with them keeps them until its next restart, and the Claude
+  provider refuses every turn while `ANTHROPIC_BASE_URL` is set, at any value. The switch itself still
+  reports success, and Hermes answers on its fallback model. The worker catches `BaseException`, so a process exit becomes
   a failed receipt.
 - **A backend never calls itself over HTTP:** `/preflight` answers for its own process directly.
 - **A single-profile Desktop backend has no `--profile` argument**; discovery names it `default`.

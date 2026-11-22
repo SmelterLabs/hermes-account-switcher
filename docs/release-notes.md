@@ -1,5 +1,27 @@
 # Release notes — Hermes Account Switcher
 
+## 1.4.7
+
+A gateway the plugin starts no longer inherits a Claude Code session.
+
+- **The cause.** `gateway_command` and the worker launch passed on the whole environment of the process
+  that asked, minus `PYTHONPATH` and `PYTHONHOME`. When that process descended from a Claude Code session
+  (a switch or a gateway start asked for by an agent working in one), the new gateway got the session's
+  variables, `ANTHROPIC_BASE_URL` among them, and kept them for as long as it ran. The Claude subscription
+  provider refuses a turn when that variable is set at all (`OAuth provider refuses conflicting native
+  auth/backend overrides: ANTHROPIC_BASE_URL`), so every Claude turn failed before sending anything and
+  Hermes answered on its fallback model. The switch itself succeeded and said so. Seen on a real PC on
+  2026-11-22: the running gateway's environment held `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` and
+  `ANTHROPIC_BASE_URL`.
+- **The fix.** `worker_launch.clean_env`, which every child already goes through, drops `ANTHROPIC_*`
+  and `CLAUDE*` when `CLAUDECODE` is present. `CLAUDE_SUBSCRIPTION_DIRECTSDK_*` (the provider's own
+  settings) is kept. Outside a Claude Code session nothing changes, so a user's own `ANTHROPIC_API_KEY`
+  still reaches Hermes.
+- **A gateway already started that way** keeps the variables until it is restarted from outside a Claude
+  Code session, or by 1.4.7.
+- Tests: a gateway start and a worker launch from inside a session carry none of its variables and keep
+  the provider's; outside a session the user's Anthropic settings pass through.
+
 ## 1.4.6
 
 Switching keeps working after a Hermes update. Also ships 1.4.5, which was never published on its own.
