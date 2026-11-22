@@ -96,3 +96,20 @@ def test_reviewed_provider_and_local_template_urls_allowed():
     for text in ('https://api.openai.com/profile', 'https://chatgpt.com/backend-api/wham/usage',
                  'https://api.anthropic.com/api/oauth/profile', "http://127.0.0.1:{backend['port']}/api/status"):
         m.scan('fixture.py', text.encode())
+
+
+def test_claude_sign_in_hosts_allowed_also_when_written_as_a_pattern():
+    m = builder()
+    for text in ('https://claude.ai/oauth/authorize?fixture', 'https://claude.com/cai/oauth/authorize',
+                 r"re.compile(r'https://claude\.ai/\S+|https://claude\.com/\S+')"):
+        m.scan('fixture.py', text.encode())
+
+
+def test_token_fixtures_allowed_only_in_tests_with_the_fixture_prefix():
+    m = builder()
+    fixture = 'sk-ant-' + 'oat01-fixture-gmail'
+    m.scan('tests/test_claude.py', fixture.encode())
+    for rel, text in (('claude_login.py', fixture), ('tests/test_claude.py', 'sk-ant-' + 'oat01-' + 'A' * 40),
+                      ('tests/test_claude.py', 'sk-' + 'proj-' + 'B' * 30)):
+        with pytest.raises(ValueError, match='Secret-shaped'):
+            m.scan(rel, text.encode())

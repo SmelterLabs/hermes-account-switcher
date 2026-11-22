@@ -43,6 +43,9 @@ jobs:
           cache-dependency-path: requirements-test.lock
       - run: python -m pip install -r requirements-test.lock
       - run: python -m pytest tests -q -rs
+      # The release runs this same build and privacy scan; failing here stops a merge that could not publish.
+      - name: Release build and privacy scan
+        run: python build_release.py --output out
 
   interface:
     name: Interface tests
