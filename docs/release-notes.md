@@ -1,5 +1,23 @@
 # Release notes — Hermes Account Switcher
 
+## 1.4.11
+
+A switch that restarts the gateway now waits for a session's background job instead of failing on it.
+
+- **The defect.** `gateway_states` read `active_agents` from `gateway_state.json`. That count leaves out a
+  session's background jobs (`process run`); the file names them, in `active_work`, only while draining.
+  Hermes's stop guard (`hermes_cli/gateway_lifecycle_guards.py`) counts them and refuses `gateway stop`
+  without `--yes`. So preflight and the drain check both passed, the stop was refused, and the switch ended
+  with "The Hermes gateway did not stop." No account was changed.
+- **Seen.** A gateway with `active_agents` 0 and one background build job: `gateway_idle()` said idle and
+  `hermes gateway stop` refused, naming the job.
+- **The change.** `compat.gateway_live_work(home)` asks Hermes the question its stop guard asks
+  (`live_work`, answered by the running gateway over its control pipe). `gateway_states` reports the largest
+  of that answer, the file's count and the units the file names, as `active_agents`, so every idle test
+  (preflight, the drain check, the plugin reload, the guard after a live switch) sees the same work a stop
+  would interrupt. On a Hermes without the stop guard the file's count stands, as before.
+- **Not changed.** The plugin still never passes `--yes`: it waits, it does not interrupt.
+
 ## 1.4.10
 
 A Codex login that Hermes is using again is no longer reported as at its usage limit.

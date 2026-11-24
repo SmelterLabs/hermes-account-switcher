@@ -96,6 +96,44 @@ def test_gateway_states(machine, name):
     assert homes == ([machine.root, machine.alpha] if expected == 'counted' else [machine.root])
 
 
+@pytest.mark.parametrize('live, named, counted', [
+    (None, None, 0),                       # a Hermes that cannot say: the file's own count stands
+    (0, None, 0),
+    (1, None, 1),                          # a session's background job: the file says 0, a stop is refused
+    (None, [{'kind': 'process'}, {'kind': 'chat'}], 2),   # named in the file while draining
+    (3, [{'kind': 'process'}], 3),
+])
+def test_work_a_stop_would_interrupt_counts_as_active(machine, monkeypatch, live, named, counted):
+    """Before: only the file's `active_agents` was read, which leaves out a session's background jobs. The
+    idle check passed, `hermes gateway stop` refused, and the switch failed with "did not stop"."""
+    asked = []
+    monkeypatch.setattr(ops, 'gateway_live_work', lambda home: asked.append(Path(home)) or live)
+    record = json.loads((machine.root / 'gateway_state.json').read_text(encoding='utf-8'))
+    record.update(active_work=named, hermes_home=str(machine.root / 'owner'))
+    (machine.root / 'gateway_state.json').write_text(json.dumps(record), encoding='utf-8')
+    monkeypatch.setattr(ops.psutil, 'pid_exists', lambda pid: pid == ROOT_PID)
+    monkeypatch.setattr(ops.psutil, 'Process', lambda pid: SimpleNamespace(create_time=lambda: 1.0))
+    (_, state), = ops.gateway_states()
+    assert state['active_agents'] == counted
+    assert asked == [machine.root / 'owner']        # asked of the gateway's own home, as the stop is
+    assert ops.gateway_idle() is (counted == 0)
+
+
+def test_live_work_counts_as_hermes_stop_does(monkeypatch):
+    import compat
+    answers = {'units': {'active_agents': 0, 'active_work': [{'kind': 'process'}, 'junk']},
+               'count_only': {'active_agents': 2, 'active_work': []}, 'idle': {'active_agents': 0, 'active_work': []},
+               'no_gateway': None}
+    guards = SimpleNamespace(live_work=lambda home: answers[home.name])
+    monkeypatch.setattr(compat, 'import_module', lambda name: guards)
+    assert [compat.gateway_live_work(name) for name in answers] == [1, 2, 0, None]
+
+    def missing(name):
+        raise ImportError(name)
+    monkeypatch.setattr(compat, 'import_module', missing)         # a Hermes without the stop guard
+    assert compat.gateway_live_work('units') is None
+
+
 # gateway_setting_blockers: only a live gateway with a fresh heartbeat is evidence of a hidden gateway. An
 # unreadable record is not; a switch that needs the gateway refuses on it in gateway_states.
 SETTING_BLOCKERS = {

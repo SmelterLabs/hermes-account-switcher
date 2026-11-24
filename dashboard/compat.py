@@ -130,6 +130,22 @@ def drain_control():
     return import_module('gateway.drain_control')
 
 
+def gateway_live_work(home):
+    """How many pieces of work stopping the gateway that serves `home` would interrupt, counted the way
+    Hermes's own `gateway stop` counts them before it refuses; None when this Hermes cannot say.
+
+    gateway_state.json's `active_agents` leaves out a session's background jobs, so a gateway can read idle
+    there while `hermes gateway stop` still refuses. The live answer names every unit."""
+    try:
+        work = import_module('hermes_cli.gateway_lifecycle_guards').live_work(Path(home))
+        if work is None:
+            return None
+        units = [unit for unit in work.get('active_work') or [] if isinstance(unit, dict)]
+        return max(len(units), int(work.get('active_agents') or 0))
+    except Exception:
+        return None
+
+
 def gateway_hosts_desktop():
     """True on Hermes with the unified gateway runtime (v0.22 on), where Hermes Desktop starts no backend
     of its own: it attaches to the gateway, which serves the dashboard and this plugin and runs every turn.
