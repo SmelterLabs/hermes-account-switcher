@@ -6,7 +6,7 @@ not been proven is in [docs/acceptance.md](docs/acceptance.md).
 
 ## What this is
 
-A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.4.10)
+A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.4.11)
 that switches which Codex login and which Claude subscription account every local Hermes profile
 on the PC uses, through one idle-only, verified restart. It began as a private tool tailored to
 one machine and is packaged here for anyone. **The working behavior was preserved, not
@@ -273,6 +273,10 @@ checked against the login, never inferred from a label**.
   days later, and renewals do not move it (seen on the owner's PC, 2026-10-23). `sign_in_expired()` reads it:
   such an account shows as not logged in, and the check refuses it without renewing.
   `sign_in_warnings()` adds a Claude notice to the dialog from `SIGN_IN_NOTICE_DAYS` (3) before that date.
+- **`active_agents` in `gateway_state.json` is not everything a stop interrupts (1.4.11).** It leaves out a
+  session's background jobs, and Hermes refuses `gateway stop` over them. `gateway_states` therefore returns
+  the larger of the file's count and `compat.gateway_live_work` (Hermes's own `live_work`, the question its
+  stop guard asks) under the same key. Read gateway work through `gateway_states`, never from the file.
 - **An `exhausted` mark in a Codex store outlives the wait it stands for (1.4.10).** Hermes clears it only
   when that profile next selects a Codex login. Whether the login is really out of service is worked out by
   `switch_core._benched_until`, a copy of Hermes's `_exhausted_until` / `_exhausted_ttl`

@@ -21,14 +21,14 @@ if __package__:  # imported by the dashboard API inside Hermes's web server
                               lapsed_note, selected, summaries)
     from .settings import SettingsError, load_settings, settings_snapshot, ensure_settings_unchanged
     from .compat import (UnsupportedRuntime, require_switch_interfaces, committed_venv, drain_control, safe_yaml_load,
-                         gateway_hosts_desktop, read_gateway_record)
+                         gateway_hosts_desktop, gateway_live_work, read_gateway_record)
     from .worker_launch import clean_env
 else:  # the helper scripts and the test suite, with dashboard/ on their own sys.path
     from switch_core import (CLAUDE, EMAILS, PROVIDERS, SwitchError, WrongAccount, effective, health_warning, identify, lapsed_note,
                              selected, summaries)
     from settings import SettingsError, load_settings, settings_snapshot, ensure_settings_unchanged
     from compat import (UnsupportedRuntime, require_switch_interfaces, committed_venv, drain_control, safe_yaml_load,
-                        gateway_hosts_desktop, read_gateway_record)
+                        gateway_hosts_desktop, gateway_live_work, read_gateway_record)
     from worker_launch import clean_env
 
 ROOT = Path(os.environ.get('HERMES_HOME') or Path(os.environ.get('LOCALAPPDATA', tempfile.gettempdir())) / 'hermes')
@@ -1261,7 +1261,13 @@ def gateway_states(require_drain=False):
                 raise ValueError()
             if require_drain and record.state != 'draining':
                 raise SwitchError('Gateway admission has not finished closing yet.')
-            states.append((home, record.data))
+            # `active_agents` here is everything a stop would interrupt, so every caller's idle test also
+            # sees a session's background jobs: the file's own count leaves them out and names them (in
+            # `active_work`) only while draining, and Hermes refuses the stop over them all the same.
+            named = record.data.get('active_work')
+            live = gateway_live_work(record.data.get('hermes_home') or home)
+            active = max(active, len(named) if isinstance(named, list) else 0, live or 0)
+            states.append((home, {**record.data, 'active_agents': active}))
         except SwitchError:
             raise
         except Exception:
