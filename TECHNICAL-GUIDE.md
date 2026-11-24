@@ -6,7 +6,7 @@ not been proven is in [docs/acceptance.md](docs/acceptance.md).
 
 ## What this is
 
-A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.4.9)
+A Windows-only Hermes Desktop plugin (ID `account-switcher`, version 1.4.10)
 that switches which Codex login and which Claude subscription account every local Hermes profile
 on the PC uses, through one idle-only, verified restart. It began as a private tool tailored to
 one machine and is packaged here for anyone. **The working behavior was preserved, not
@@ -273,6 +273,13 @@ checked against the login, never inferred from a label**.
   days later, and renewals do not move it (seen on the owner's PC, 2026-10-23). `sign_in_expired()` reads it:
   such an account shows as not logged in, and the check refuses it without renewing.
   `sign_in_warnings()` adds a Claude notice to the dialog from `SIGN_IN_NOTICE_DAYS` (3) before that date.
+- **An `exhausted` mark in a Codex store outlives the wait it stands for (1.4.10).** Hermes clears it only
+  when that profile next selects a Codex login. Whether the login is really out of service is worked out by
+  `switch_core._benched_until`, a copy of Hermes's `_exhausted_until` / `_exhausted_ttl`
+  (`agent/credential_pool.py`): the provider's reset time, else `last_status_at` plus 5 minutes (401), one
+  minute (last non-dead login, or unverified billing) or an hour, else no wait. If Hermes changes those
+  waits, change them here. A mark with no error code and no reset time is a failed token renewal, not a
+  limit, and `health_warning` words it so. `model_cooldowns` are not read.
 - **The year-long sign-in replaces the four-week one (1.4.9).** `claude setup-token` makes a one-year token
   that may only make model requests. The Claude provider (0.3.5 seen) reads `<folder>\oauth-token.txt` on
   every spawn and passes it as `CLAUDE_CODE_OAUTH_TOKEN`, which wins over the folder's `.credentials.json`

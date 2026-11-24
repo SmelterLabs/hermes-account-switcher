@@ -4,6 +4,7 @@ import base64
 import json
 import time
 from collections.abc import Mapping
+from datetime import datetime
 if __package__:  # imported by the dashboard API inside Hermes's web server
     from .settings import load_settings
 else:  # the helper scripts and the test suite
@@ -105,22 +106,71 @@ def selected(accounts):
     return min(prios, key=prios.get)
 
 
-def _usable(row, now):
-    """Mirror Hermes's pool: a DEAD login never serves; an EXHAUSTED one waits for its reset."""
+def _timestamp(value):
+    """Epoch seconds from what Hermes stores (seconds, milliseconds or ISO-8601 text); None when it is none."""
+    if isinstance(value, str):
+        try:
+            value = float(value)
+        except ValueError:
+            try:
+                return datetime.fromisoformat(value.strip()).timestamp()
+            except ValueError:
+                return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return None
+    return value / 1000 if value > 1_000_000_000_000 else value
+
+
+def _benched_until(row, sole):
+    """When Hermes next tries an EXHAUSTED login; None = at its next request.
+
+    Hermes's own rule (`_exhausted_until` and `_exhausted_ttl` in agent/credential_pool.py): the reset time the
+    provider gave, else the time of the mark plus a wait sized by the error, else no wait at all. The word
+    "exhausted" stays in the store until that profile next picks a Codex login, long after the wait is over.
+    """
+    reset = _timestamp(row.get('last_error_reset_at'))
+    if reset is not None:
+        return reset
+    marked = row.get('last_status_at')
+    if isinstance(marked, bool) or not isinstance(marked, (int, float)) or not marked:
+        return None
+    code, reason = row.get('last_error_code'), row.get('failure_reason')
+    if code == 401:
+        wait = 300
+    elif reason == 'billing_unverified' and code != 402:
+        wait = 60
+    elif sole and code != 402 and reason != 'billing':
+        wait = 60  # nothing to rotate to, so Hermes retries a passing error soon
+    else:
+        wait = 3600
+    return marked + wait
+
+
+def _rows(accounts):
+    return [row for item in accounts.values() for row in item['entries']]
+
+
+def _sole(accounts):
+    return sum(1 for row in _rows(accounts) if row.get('last_status') != 'dead') <= 1
+
+
+def _usable(row, now, sole=False):
+    """Mirror Hermes's pool: a DEAD login never serves; an EXHAUSTED one sits out until its wait is over."""
     status = row.get('last_status')
     if status == 'dead':
         return False
     if status == 'exhausted':
-        reset = row.get('last_error_reset_at')
-        return isinstance(reset, (int, float)) and reset <= now
+        until = _benched_until(row, sole)
+        return until is None or until <= now
     return True
 
 
 def effective(accounts, now):
     """The account Hermes actually tries first once dead/exhausted logins are skipped (None = no usable login)."""
+    sole = _sole(accounts)
     rows = sorted(((row.get('priority', float('inf')), key, row)
                    for key, item in accounts.items() for row in item['entries']), key=lambda t: t[0])
-    return next((key for _, key, row in rows if _usable(row, now)), None)
+    return next((key for _, key, row in rows if _usable(row, now, sole)), None)
 
 
 def health_warning(name, accounts, now):
@@ -129,8 +179,21 @@ def health_warning(name, accounts, now):
     actual = effective(accounts, now)
     if preferred is None or actual == preferred:
         return None
-    dead = accounts[preferred]['entry'].get('last_status') or 'unusable'
+    entry = accounts[preferred]['entry']
+    dead = entry.get('last_status') or 'unusable'
     who = CODEX_LABELS[preferred]
+    if dead == 'exhausted' and entry.get('last_error_code') != 429 \
+            and _timestamp(entry.get('last_error_reset_at')) is None:
+        # Not a limit: Hermes set the login aside after some other error (a token renewal that failed, a
+        # server error) and tries it again by itself after a fixed wait.
+        left = (_benched_until(entry, _sole(accounts)) or now) - now
+        minutes = max(1, -(-int(left) // 60))
+        again = f'in about {minutes} minute{"" if minutes == 1 else "s"}'
+        if actual is None:
+            return (f'{name}: no Codex login is usable (Hermes set {who} aside after an error). Hermes tries it '
+                    f'again by itself {again}.')
+        return (f'{name}: Hermes set {who} aside after an error, so Codex is billing {CODEX_LABELS[actual]}. '
+                f'Hermes tries {who} again by itself {again}.')
     if dead == 'exhausted':
         # A usage limit passes by itself; a new sign-in would change nothing.
         if actual is None:

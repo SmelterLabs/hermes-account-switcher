@@ -20,14 +20,16 @@ What that needs, and what to expect:
   window warns two weeks before it runs out (three days ahead for an account still on the four-week one).
 
 - Plugin ID: `account-switcher`
-- Version: **1.4.9** ([latest release](https://github.com/SmelterLabs/hermes-account-switcher/releases/latest))
+- Version: **1.4.10** ([latest release](https://github.com/SmelterLabs/hermes-account-switcher/releases/latest))
 - Platform: **Windows only**
 - Scope: local Hermes profiles on this machine. Remote machines, the standalone Codex app, and
   Claude Code's own sessions are not touched.
 
 ## Status
 
-Version **1.4.9** gives each Claude account a year-long sign-in, so the four-weekly sign-in is no longer
+Version **1.4.10** stops a false warning: a Codex login that Hermes had set aside after an error and was
+already using again was still shown as at its usage limit, with another account paying. Version 1.4.9 gives
+each Claude account a year-long sign-in, so the four-weekly sign-in is no longer
 needed. Run `setup.cmd claude <key>` once per account: while its four-week sign-in still works, that is one
 browser approval. The switch checks the year-long sign-in with Anthropic before using it, without sending a
 message. Version 1.4.8 says so when Hermes cannot use Claude at all: the window shows why, a Claude switch is
