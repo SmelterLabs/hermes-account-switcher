@@ -1,5 +1,24 @@
 # Release notes — Hermes Account Switcher
 
+## 1.4.10
+
+A Codex login that Hermes is using again is no longer reported as at its usage limit.
+
+- **The defect.** `switch_core._usable` treated an `exhausted` row as out of service unless it carried a
+  numeric `last_error_reset_at` in the past. Hermes writes that field only when the provider gave a reset
+  time. Without one, Hermes (`_exhausted_until` / `_exhausted_ttl` in `agent/credential_pool.py`) waits from
+  `last_status_at`: 5 minutes after a 401, otherwise an hour, or one minute when no other login is left or
+  the billing verdict is unverified; with no `last_status_at` it does not wait at all. The word `exhausted`
+  stays in the store until that profile next selects a Codex login, so the old rule warned indefinitely.
+- **Seen.** A row marked at 03:15 with no error code and no reset time (what `_mark_exhausted(entry, None)`
+  leaves when a token renewal fails non-terminally). Hermes used the login again from 04:15; the window
+  still said "has reached its usage limit, so Codex is billing ..." at 09:30.
+- **The change.** `_benched_until(row, sole)` applies Hermes's rule, including a reset time written as
+  milliseconds or ISO-8601 text. `effective()` passes whether the store has one non-dead login left.
+- **The wording.** `health_warning` keeps "has reached its usage limit" for a row with a reset time or a
+  429. Any other exhausted row reads "Hermes set <account> aside after an error" and gives the minutes left.
+- **Not covered.** Hermes's per-model cooldowns (`model_cooldowns`) are still not read.
+
 ## 1.4.9
 
 Claude accounts get a year-long sign-in, so Hermes stops needing a new Claude sign-in every four weeks.

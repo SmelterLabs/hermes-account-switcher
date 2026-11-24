@@ -131,6 +131,63 @@ def test_a_login_at_its_usage_limit_is_waited_for_not_signed_in_again():
     assert 'no Codex login is usable' in warning and 'Sign' not in warning
 
 
+def test_an_old_exhausted_mark_with_no_reset_time_is_not_a_warning():
+    # Seen live: a token renewal failed at 03:15, Hermes left "exhausted" with no error code and no reset time,
+    # and used the login again from 04:15. The mark stayed in the store, and the window said "usage limit" at 09:30.
+    rows = entries()
+    rows[0].update(last_status='exhausted', last_status_at=1000.0, last_error_code=None, last_error_reset_at=None)
+    acc = identify(rows)
+    assert effective(acc, 1000 + 3600) == 'personal'
+    assert health_warning('alpha', acc, 1000 + 3600) is None
+    # A mark with no time at all holds nothing back in Hermes.
+    rows[0].update(last_status_at=None)
+    assert effective(identify(rows), 1000) == 'personal'
+
+
+def test_a_login_set_aside_for_another_error_is_not_called_a_usage_limit():
+    rows = entries()
+    rows[0].update(last_status='exhausted', last_status_at=1000.0, last_error_code=None, last_error_reset_at=None)
+    assert health_warning('alpha', identify(rows), 1000 + 600) == \
+        ('alpha: Hermes set Personal aside after an error, so Codex is billing Work. '
+         'Hermes tries Personal again by itself in about 50 minutes.')
+    rows[1].update(last_status='exhausted', last_status_at=1000.0)
+    warning = health_warning('alpha', identify(rows), 1000 + 3540)
+    assert warning == ('alpha: no Codex login is usable (Hermes set Personal aside after an error). '
+                       'Hermes tries it again by itself in about 1 minute.')
+
+
+@pytest.mark.parametrize('fields, wait', [
+    ({'last_error_code': 401}, 300),                                    # a refused token: five minutes
+    ({'last_error_code': 429}, 3600),                                   # a limit with no reset time: an hour
+    ({'last_error_code': 500}, 3600),
+    ({'last_error_code': 400, 'failure_reason': 'billing_unverified'}, 60),
+    ({'last_error_code': 402, 'failure_reason': 'billing_unverified'}, 3600)])
+def test_the_wait_without_a_reset_time_is_the_one_hermes_uses(fields, wait):
+    rows = entries()
+    rows[0].update(last_status='exhausted', last_status_at=1000.0, **fields)
+    assert effective(identify(rows), 1000 + wait - 1) == 'work'
+    assert effective(identify(rows), 1000 + wait) == 'personal'
+
+
+def test_the_only_login_left_is_retried_after_a_minute_unless_it_is_billing():
+    rows = entries()
+    rows[1]['last_status'] = 'dead'
+    rows[0].update(last_status='exhausted', last_status_at=1000.0, last_error_code=429)
+    assert effective(identify(rows), 1059) is None
+    assert effective(identify(rows), 1060) == 'personal'
+    rows[0].update(failure_reason='billing')
+    assert effective(identify(rows), 1060) is None
+
+
+def test_a_reset_time_is_read_in_every_form_hermes_writes():
+    for reset in (5000, '5000', 5_000_000_000_000 / 1000 * 1000, '1970-01-01T01:23:20+00:00'):
+        rows = entries()
+        rows[0].update(last_status='exhausted', last_status_at=1.0, last_error_reset_at=reset)
+        when = 5_000_000_000 if isinstance(reset, float) else 5000
+        assert effective(identify(rows), when - 1) == 'work', reset
+        assert effective(identify(rows), when) == 'personal', reset
+
+
 def test_no_usable_login_warns():
     rows = entries()
     for row in rows:
